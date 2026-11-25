@@ -1,0 +1,24 @@
+# Konfigurasi Streamlit untuk dashboard NP Energy Intelligence.
+# Dibaca dari folder tempat perintah "streamlit run" dijalankan (folder utama proyek).
+
+[server]
+# Hanya dapat diakses dari komputer ini (tidak dibuka ke jaringan). Ubah dengan sengaja jika kelak
+# dashboard perlu dibuka dari perangkat lain.
+address = "localhost"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Menyembunyikan tombol Deploy dan menu pengembang agar tampilan presentasi bersih.
+toolbarMode = "minimal"
+
+[theme]
+primaryColor = "#0072B2"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F7FA"
+textColor = "#1F2933"
+font = "sans-serif"
+borderColor = "#D9E2EC"
+baseRadius = "0.5rem"
+dataframeHeaderBackgroundColor = "#EAF0F6"

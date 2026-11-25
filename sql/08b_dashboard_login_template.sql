@@ -1,0 +1,11 @@
+-- TEMPLATE: membuat role LOGIN untuk aplikasi dashboard.
+-- JANGAN menyimpan password asli di file ini atau di GitHub.
+-- Cara pakai: salin isi di bawah ke Query Tool pgAdmin, GANTI 'GANTI_DENGAN_PASSWORD_KUAT' dengan
+-- password pilihan Anda, jalankan, lalu tutup tanpa menyimpan file. Jalankan sebagai user postgres.
+--
+-- CREATE ROLE np_dashboard LOGIN PASSWORD 'GANTI_DENGAN_PASSWORD_KUAT' IN ROLE np_dashboard_reader;
+-- ALTER ROLE np_dashboard SET default_transaction_read_only = on;  -- lapis kedua: transaksi baca-saja
+-- ALTER ROLE np_dashboard SET statement_timeout = '30s';           -- query yang terlalu lama dihentikan
+--
+-- Jika role sudah ada dan Anda hanya ingin mengganti password:
+-- ALTER ROLE np_dashboard PASSWORD 'GANTI_DENGAN_PASSWORD_KUAT';

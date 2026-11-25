@@ -1,0 +1,17 @@
+__pycache__/
+.venv/
+*.pyc
+.env
+.env.*
+!.env.example
+# Local test/cache
+.pytest_cache/
+.streamlit/secrets.toml
+
+# Local backups
+dashboard_cadangan_*/
+fase4-*_temp/
+
+# Local logs
+logs/
+
