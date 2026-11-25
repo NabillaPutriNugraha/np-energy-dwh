@@ -1,4 +1,5 @@
-﻿"""Pengaturan dashboard: membaca konfigurasi lokal atau Streamlit Secrets.
+﻿
+"""Pengaturan dashboard: membaca konfigurasi lokal atau Streamlit Secrets.
 Dashboard memakai akun BACA-SAJA (np_dashboard), bukan akun ETL/admin.
 """
 
@@ -44,10 +45,13 @@ def db_settings() -> dict:
             "di file .env. Untuk Streamlit Cloud, isi keduanya di Secrets."
         )
 
+    host = _secret_or_env("DB_HOST", "localhost")
+
     return {
-        "host": _secret_or_env("DB_HOST", "localhost"),
+        "host": host,
         "port": int(_secret_or_env("DB_PORT", "5432")),
         "dbname": _secret_or_env("DB_NAME", "np_energy_dw"),
         "user": user,
         "password": password,
+        "sslmode": "disable" if host in ("localhost", "127.0.0.1", "::1") else "require",
     }
