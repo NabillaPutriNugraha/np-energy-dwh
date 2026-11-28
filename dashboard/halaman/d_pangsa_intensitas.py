@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import components
 import db
 import queries
 import theme
@@ -18,10 +19,19 @@ names = dict(opts["countries"])
 semua = (len(cont) == len(opts["continents"])) and (len(grp) == len(opts["groups"]))
 scope_label = "Dunia" if semua else "Negara terpilih"
 MIN_TWH, MIN_N = queries.D_MIN_TWH, queries.D_MIN_N
+nama_sorot = names.get(iso, iso)
 
+chips = components.active_filter_chips(
+    year, cont, opts["continents"], grp, opts["groups"], country_name=nama_sorot
+)
+components.hero_banner(
+    "Pangsa Terbarukan vs Intensitas Emisi",
+    "Hubungan observasional antara pangsa listrik terbarukan dan intensitas emisi listrik antarnegara (Ember).",
+    chips=chips,
+    variant="intensity",
+)
 st.title("D. Pangsa Terbarukan vs Intensitas Emisi")
-st.caption("Bagaimana hubungan antara pangsa listrik terbarukan dan intensitas emisi listrik antarnegara. "
-           "Sumber: Data Warehouse NP Energy Intelligence (Ember); kedua indikator berasal dari sumber yang sama.")
+st.caption("Sumber: Data Warehouse NP Energy Intelligence (Ember); kedua indikator berasal dari sumber yang sama.")
 st.warning("**Catatan interpretasi (selalu berlaku):** hubungan yang ditampilkan di halaman ini bersifat observasional "
            "(korelasi antarnegara) dan **bukan bukti hubungan sebab-akibat**. Korelasi tidak menunjukkan arah maupun "
            "penyebab, dan negara dapat berbeda karena banyak hal lain yang tidak ada dalam data ini.")
@@ -35,24 +45,32 @@ stats = db.safe(queries.d_stats, cont, grp)
 cover = db.safe(queries.d_cover, cont, grp).set_index("year")
 ada = (not stats.empty) and year in set(stats["year"])
 cur = stats[stats["year"] == year].iloc[0] if ada else None
-if cur is None or int(cur["n"]) < queries.D_MIN_N_KPI or pd.isna(cur["pearson_bulat"]):
-    n_ada = int(cur["n"]) if cur is not None else 0
-    st.info(f"Data tidak cukup untuk menghitung hubungan pada filter ini: hanya {n_ada} negara yang memiliki pangsa "
-            f"terbarukan dan intensitas emisi pada {year} (minimal {queries.D_MIN_N_KPI} negara). Ubah filter di sidebar. "
-            f"Nilai yang kosong di sumber tidak diisi dengan perkiraan.")
+if cur is None or pd.isna(cur["n"]) or int(cur["n"]) < queries.D_MIN_N_KPI or pd.isna(cur["pearson_bulat"]):
+    n_ada = int(cur["n"]) if (cur is not None and pd.notna(cur["n"])) else 0
+    components.empty_state(
+        f"Data tidak cukup untuk menghitung hubungan pada filter ini: hanya {n_ada} negara yang memiliki pangsa "
+        f"terbarukan dan intensitas emisi pada {year} (minimal {queries.D_MIN_N_KPI} negara). Ubah filter di sidebar. "
+        f"Nilai yang kosong di sumber tidak diisi dengan perkiraan."
+    )
     st.stop()
 
 ada_awal = year != base and base in set(stats["year"])
 prev = stats[stats["year"] == base].iloc[0] if ada_awal else None
-bandingkan = prev is not None and int(prev["n"]) >= queries.D_MIN_N_KPI and pd.notna(prev["pearson_bulat"])
+bandingkan = (prev is not None and pd.notna(prev["n"]) and int(prev["n"]) >= queries.D_MIN_N_KPI
+              and pd.notna(prev["pearson_bulat"]))
 n_cur = int(cur["n"])
-n_ember = int(cover.loc[year, "negara_ember"]) if year in cover.index else n_cur
+n_ember = int(cover.loc[year, "negara_ember"]) if (year in cover.index and pd.notna(cover.loc[year, "negara_ember"])) else n_cur
 
 
 def delta(kolom, dec):
-    """Selisih dari angka yang ditampilkan (sudah dibulatkan di SQL), sama dengan halaman lain."""
-    return theme.fmt_delta(float(cur[kolom]) - float(prev[kolom]), dec) if bandingkan else None
+    """Selisih dari angka yang ditampilkan (sudah dibulatkan di SQL), aman terhadap NULL/NaN."""
+    if not bandingkan or pd.isna(cur[kolom]) or pd.isna(prev[kolom]):
+        return None
+    return theme.fmt_delta(float(cur[kolom]) - float(prev[kolom]), dec)
 
+
+# Warna semantik kartu korelasi (negatif = merah coral, positif = hijau emerald) tanpa mengubah label/nilai/delta
+components.correlation_card_accent(cur["pearson_bulat"], cur["spearman_bulat"], cur["lereng_bulat"])
 
 # ------------------------------------------------------------------ kartu KPI
 c1, c2, c3, c4 = st.columns(4)
@@ -80,6 +98,24 @@ if n_cur < MIN_N:
     st.warning(f"Hanya {n_cur} negara pada filter ini (kurang dari {MIN_N}). Korelasi dari jumlah negara sekecil ini "
                f"tidak stabil dan sebaiknya tidak ditafsirkan.")
 
+components.glossary_box(
+    "Panduan Istilah Statistik (Bahasa Awam)",
+    [
+        (
+            "Korelasi Pearson & Spearman",
+            "Angka antara -1 sampai +1 yang mengukur kekuatan pola hubungan antarnegara. Nilai negatif berarti pangsa terbarukan lebih tinggi cenderung beriringan dengan intensitas emisi lebih rendah.",
+        ),
+        (
+            "Lereng Regresi & R²",
+            "Lereng menunjukkan kemiringan rata-rata garis tren lurus (perubahan gCO₂e/kWh per kenaikan pangsa 1 poin); R² menunjukkan seberapa dekat sebaran titik mengikuti garis tersebut.",
+        ),
+        (
+            "Negara Pencilan",
+            "Negara yang intensitas emisinya menyimpang paling jauh di atas atau di bawah garis tren umum dibandingkan negara lain dengan pangsa terbarukan serupa.",
+        ),
+    ],
+)
+
 tab_s, tab_b, tab_p, tab_o = st.tabs(["Sebaran dan garis regresi", "Korelasi per benua",
                                        f"Perubahan {base} ke {year}", "Negara pencilan"])
 
@@ -87,9 +123,18 @@ tab_s, tab_b, tab_p, tab_o = st.tabs(["Sebaran dan garis regresi", "Korelasi per
 with tab_s:
     titik = db.safe(queries.d_points, year, cont, grp)
     sorot = db.safe(queries.d_point_country, year, iso)
-    nama_sorot = names.get(iso, iso)
-    st.plotly_chart(charts.scatter_regression(titik, cur["intersep"], cur["lereng"], cur["x_min"], cur["x_max"], year,
-                                              sorot if len(sorot) else None, nama_sorot), width="stretch")
+    components.micro_guide(
+        "Gunakan 4 label zona kuadran di sudut grafik untuk membaca posisi negara; lingkaran biru tegas menandai negara sorotan di atas titik lain yang dilembutkan."
+    )
+    if titik.empty:
+        components.empty_state("Tidak ada titik negara yang dapat digambar pada filter ini.")
+    else:
+        st.plotly_chart(charts.scatter_regression(titik, cur["intersep"], cur["lereng"], cur["x_min"], cur["x_max"], year,
+                                                  sorot if len(sorot) else None, nama_sorot), width="stretch")
+        components.insight_box(
+            f"Pada {year} ({scope_label.lower()}), korelasi Pearson antarnegara tercatat {theme.fmt_num(cur['pearson_bulat'], 2)} "
+            f"(R² = {theme.fmt_num(cur['r2_bulat'], 2)}) dari {n_fmt(n_cur)} negara berdata lengkap."
+        )
     st.caption(f"Setiap titik adalah satu negara pada {year}. Posisi mendatar = pangsa listrik terbarukan (Ember), posisi "
                f"tegak = intensitas emisi, ukuran = total pembangkitan listrik (TWh), warna = benua. Garis putus-putus = "
                f"garis regresi sederhana (intensitas terhadap pangsa) dari {n_fmt(n_cur)} negara pada grafik. Arahkan "
@@ -135,55 +180,60 @@ with tab_p:
                 f"melihat perubahan.")
     else:
         ch = db.safe(queries.d_change, year, cont, grp)
-        cs = db.safe(queries.d_change_stats, year, cont, grp).iloc[0]
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Negara berdata lengkap", f"{n_fmt(cs['n_lengkap'])} dari {n_fmt(cs['n_daftar'])}",
-                  help=f"Negara yang pangsa terbarukan dan intensitas emisinya terisi pada {base} dan {year}. Negara "
-                       f"dengan nilai kosong tetap ada di tabel, tetapi perubahannya kosong (tidak diisi).")
-        p2.metric("Median perubahan pangsa", theme.fmt_delta(cs["median_d_pangsa"], 1, " poin") or "tidak ada data",
-                  help="Median antarnegara (tidak tertimbang pembangkitan) dari selisih pangsa yang tampil.")
-        p3.metric("Median perubahan intensitas",
-                  theme.fmt_delta(cs["median_d_intensitas"], 1, " gCO₂e/kWh") or "tidak ada data",
-                  help="Median antarnegara (tidak tertimbang pembangkitan) dari selisih intensitas yang tampil.")
-        if int(cs["n_korelasi"]) >= MIN_N and pd.notna(cs["korelasi_perubahan"]):
-            p4.metric("Korelasi antar-perubahan", theme.fmt_num(cs["korelasi_perubahan"], 2),
-                      help=f"Korelasi Pearson antara perubahan pangsa dan perubahan intensitas, hanya untuk "
-                           f"{n_fmt(cs['n_korelasi'])} negara berpembangkitan minimal {MIN_TWH} TWh pada {year} "
-                           f"(keputusan desain agar negara sangat kecil tidak mendominasi).")
+        cs_df = db.safe(queries.d_change_stats, year, cont, grp)
+        if ch.empty or cs_df.empty:
+            components.empty_state("Tidak ada data perubahan untuk filter ini.")
         else:
-            p4.metric("Korelasi antar-perubahan", "tidak ada data",
-                      help=f"Dihitung hanya jika minimal {MIN_N} negara berpembangkitan minimal {MIN_TWH} TWh "
-                           f"memiliki data lengkap.")
-        st.caption(f"Perubahan {base} ke {year}; selisih dihitung dari angka yang tampil (dibulatkan 1 desimal). "
-                   f"Korelasi antar-perubahan memakai {n_fmt(cs['n_korelasi'])} negara berpembangkitan minimal "
-                   f"{MIN_TWH} TWh pada {year}. Pola ini bersifat deskriptif.")
-        lengkap = ch[ch["lengkap"]]
-        if lengkap.empty:
-            st.info("Tidak ada negara dengan data lengkap pada kedua tahun untuk filter ini.")
-        else:
-            st.plotly_chart(charts.change_scatter(lengkap, year, base), width="stretch")
-            st.caption(f"Setiap titik adalah satu negara dengan data lengkap pada {base} dan {year}; ukuran = pembangkitan "
-                       f"{year}. Negara dengan nilai kosong tidak digambar dan tidak diganti 0.")
-        tabel_p = pd.DataFrame({
-            "Negara": ch["country_name"], "Benua": ch["benua"],
-            f"Pangsa {base} (%)": ch["pangsa_awal"], f"Pangsa {year} (%)": ch["pangsa_akhir"],
-            "Perubahan pangsa (poin)": ch["d_pangsa"],
-            f"Intensitas {base}": ch["intensitas_awal"], f"Intensitas {year}": ch["intensitas_akhir"],
-            "Perubahan intensitas": ch["d_intensitas"], f"Pembangkitan {year} (TWh)": ch["pembangkitan_twh"]})
-        st.dataframe(tabel_p, hide_index=True, width="stretch", column_config={
-            c: st.column_config.NumberColumn(format="%.1f") for c in tabel_p.columns if c not in ("Negara", "Benua")})
-        n_kosong = int((~ch["lengkap"]).sum())
-        st.download_button("Unduh tabel perubahan (CSV)", tabel_p.to_csv(index=False).encode("utf-8-sig"),
-                           file_name=f"perubahan_pangsa_intensitas_{base}_{year}.csv", mime="text/csv")
-        st.caption(f"Intensitas dalam gCO₂e/kWh. Menampilkan {n_fmt(len(ch))} negara berdata Ember pada filter; "
-                   f"{n_fmt(n_kosong)} di antaranya memiliki nilai kosong pada salah satu tahun sehingga perubahannya "
-                   f"kosong (tidak diisi perkiraan).")
+            cs = cs_df.iloc[0]
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Negara berdata lengkap", f"{n_fmt(cs['n_lengkap'])} dari {n_fmt(cs['n_daftar'])}",
+                      help=f"Negara yang pangsa terbarukan dan intensitas emisinya terisi pada {base} dan {year}. Negara "
+                           f"dengan nilai kosong tetap ada di tabel, tetapi perubahannya kosong (tidak diisi).")
+            p2.metric("Median perubahan pangsa", theme.fmt_delta(cs["median_d_pangsa"], 1, " poin") or "tidak ada data",
+                      help="Median antarnegara (tidak tertimbang pembangkitan) dari selisih pangsa yang tampil.")
+            p3.metric("Median perubahan intensitas",
+                      theme.fmt_delta(cs["median_d_intensitas"], 1, " gCO₂e/kWh") or "tidak ada data",
+                      help="Median antarnegara (tidak tertimbang pembangkitan) dari selisih intensitas yang tampil.")
+            n_kor = 0 if pd.isna(cs["n_korelasi"]) else int(cs["n_korelasi"])
+            if n_kor >= MIN_N and pd.notna(cs["korelasi_perubahan"]):
+                p4.metric("Korelasi antar-perubahan", theme.fmt_num(cs["korelasi_perubahan"], 2),
+                          help=f"Korelasi Pearson antara perubahan pangsa dan perubahan intensitas, hanya untuk "
+                               f"{n_fmt(n_kor)} negara berpembangkitan minimal {MIN_TWH} TWh pada {year} "
+                               f"(keputusan desain agar negara sangat kecil tidak mendominasi).")
+            else:
+                p4.metric("Korelasi antar-perubahan", "tidak ada data",
+                          help=f"Dihitung hanya jika minimal {MIN_N} negara berpembangkitan minimal {MIN_TWH} TWh "
+                               f"memiliki data lengkap.")
+            st.caption(f"Perubahan {base} ke {year}; selisih dihitung dari angka yang tampil (dibulatkan 1 desimal). "
+                       f"Korelasi antar-perubahan memakai {n_fmt(n_kor)} negara berpembangkitan minimal "
+                       f"{MIN_TWH} TWh pada {year}. Pola ini bersifat deskriptif.")
+            lengkap = ch[ch["lengkap"]]
+            if lengkap.empty:
+                components.empty_state("Tidak ada negara dengan data lengkap pada kedua tahun untuk filter ini.")
+            else:
+                st.plotly_chart(charts.change_scatter(lengkap, year, base), width="stretch")
+                st.caption(f"Setiap titik adalah satu negara dengan data lengkap pada {base} dan {year}; ukuran = pembangkitan "
+                           f"{year}. Negara dengan nilai kosong tidak digambar dan tidak diganti 0.")
+            tabel_p = pd.DataFrame({
+                "Negara": ch["country_name"], "Benua": ch["benua"],
+                f"Pangsa {base} (%)": ch["pangsa_awal"], f"Pangsa {year} (%)": ch["pangsa_akhir"],
+                "Perubahan pangsa (poin)": ch["d_pangsa"],
+                f"Intensitas {base}": ch["intensitas_awal"], f"Intensitas {year}": ch["intensitas_akhir"],
+                "Perubahan intensitas": ch["d_intensitas"], f"Pembangkitan {year} (TWh)": ch["pembangkitan_twh"]})
+            st.dataframe(tabel_p, hide_index=True, width="stretch", column_config={
+                c: st.column_config.NumberColumn(format="%.1f") for c in tabel_p.columns if c not in ("Negara", "Benua")})
+            n_kosong = int((~ch["lengkap"]).sum())
+            st.download_button("Unduh tabel perubahan (CSV)", tabel_p.to_csv(index=False).encode("utf-8-sig"),
+                               file_name=f"perubahan_pangsa_intensitas_{base}_{year}.csv", mime="text/csv")
+            st.caption(f"Intensitas dalam gCO₂e/kWh. Menampilkan {n_fmt(len(ch))} negara berdata Ember pada filter; "
+                       f"{n_fmt(n_kosong)} di antaranya memiliki nilai kosong pada salah satu tahun sehingga perubahannya "
+                       f"kosong (tidak diisi perkiraan).")
 
 # ------------------------------------------------------------------ tab 4: pencilan
 with tab_o:
     out = db.safe(queries.d_outliers, year, cont, grp)
     if out.empty:
-        st.info(f"Tidak ada negara berpembangkitan minimal {MIN_TWH} TWh pada filter ini.")
+        components.empty_state(f"Tidak ada negara berpembangkitan minimal {MIN_TWH} TWh pada filter ini.")
     else:
         top = out.head(10)
         st.plotly_chart(charts.residual_bar(top), width="stretch")
@@ -192,7 +242,7 @@ with tab_o:
             "Pangsa terbarukan (%)": top["pangsa"], "Pangsa nuklir (%)": top["pangsa_nuklir"],
             "Intensitas aktual": top["intensitas"], "Intensitas menurut garis": top["intensitas_garis"],
             "Selisih (aktual - garis)": top["selisih"],
-            "Posisi": ["Di atas garis" if v > 0 else "Di bawah garis" for v in top["selisih"]],
+            "Posisi": ["Di atas garis" if (pd.notna(v) and v > 0) else "Di bawah garis" for v in top["selisih"]],
             "Pembangkitan (TWh)": top["pembangkitan_twh"]})
         st.dataframe(tabel_o, hide_index=True, width="stretch", column_config={
             "Pangsa terbarukan (%)": st.column_config.NumberColumn(format="%.1f"),
@@ -211,10 +261,10 @@ with tab_o:
         sorot_o = out[out["iso3_code"] == iso]
         if not sorot_o.empty:
             r = sorot_o.iloc[0]
-            st.caption(f"Negara sorotan {names.get(iso, iso)}: peringkat {int(r['peringkat'])} dari {n_fmt(len(out))}, "
+            st.caption(f"Negara sorotan {nama_sorot}: peringkat {int(r['peringkat'])} dari {n_fmt(len(out))}, "
                        f"selisih {theme.fmt_delta(r['selisih'], 1)} gCO₂e/kWh.")
         else:
-            st.caption(f"Negara sorotan ({names.get(iso, iso)}) tidak termasuk dalam daftar ini (pembangkitan di bawah "
+            st.caption(f"Negara sorotan ({nama_sorot}) tidak termasuk dalam daftar ini (pembangkitan di bawah "
                        f"{MIN_TWH} TWh, tanpa data Ember, atau di luar filter).")
 
 with st.expander("Cara membaca dan definisi"):

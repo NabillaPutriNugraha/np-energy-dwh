@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import components
 import db
 import queries
 import theme
@@ -17,31 +18,40 @@ names = dict(opts["countries"])
 UNK = queries.UNKNOWN_CONTINENT
 COLOR_PRIMER = "#E69F00"
 COLOR_BASE = "#B8B8B8"
+cname = names.get(f["country"], f["country"])
 
-st.title("B. Ketergantungan pada Fosil")
-st.caption("Seberapa besar pembangkitan listrik bergantung pada sumber fosil, bagaimana perubahannya, dan bagaimana "
-           "pangsa terbarukan pada listrik berbeda dari pangsa terbarukan pada energi primer. "
-           "Sumber: Data Warehouse NP Energy Intelligence (Renewable Energy Share).")
+chips = components.active_filter_chips(
+    year, f["continents"], opts["continents"], f["groups"], opts["groups"], country_name=cname
+)
+components.hero_banner(
+    "Ketergantungan pada Fosil",
+    "Seberapa besar pembangkitan listrik bergantung pada sumber fosil dan bagaimana perbandingannya dengan energi primer.",
+    chips=chips,
+    variant="fossil",
+)
+st.caption("Sumber: Data Warehouse NP Energy Intelligence (Renewable Energy Share).")
 
 kpi = db.safe(queries.b_kpi, f["continents"], f["groups"])
 if kpi.empty or year not in set(kpi["year"]) or pd.isna(kpi.loc[kpi["year"] == year, "fosil_bulat"].iloc[0]):
-    st.info("Tidak ada negara dengan data yang memenuhi filter. Pilih minimal satu benua dan satu kelompok negara "
-            "di sidebar.")
+    components.empty_state(components.filter_empty_message(f["continents"], f["groups"]))
     st.stop()
 
 cur = kpi[kpi["year"] == year].iloc[0]
 ada_awal = base in set(kpi["year"]) and pd.notna(kpi.loc[kpi["year"] == base, "fosil_bulat"].iloc[0])
 bandingkan = year != base and ada_awal
 prev = kpi[kpi["year"] == base].iloc[0] if bandingkan else None
-n_total = int(cur["negara_total"])
+n_total = 0 if pd.isna(cur["negara_total"]) else int(cur["negara_total"])
+n_berbobot = 0 if pd.isna(cur["negara_berbobot"]) else int(cur["negara_berbobot"])
 semua = (len(f["continents"]) == len(opts["continents"])) and (len(f["groups"]) == len(opts["groups"]))
 scope_label = f"Dunia ({n_total} negara)" if semua else f"Negara terpilih ({n_total} negara)"
 tren_label = "Dunia" if semua else "Negara terpilih"
 
 
 def d_poin(kolom):
-    """Selisih dari angka yang ditampilkan (sudah dibulatkan 1 desimal), sama dengan halaman lain."""
-    return theme.fmt_delta(float(cur[kolom]) - float(prev[kolom]), 1, " poin") if bandingkan else None
+    """Selisih dari angka yang ditampilkan (sudah dibulatkan 1 desimal), aman terhadap NULL/NaN."""
+    if not bandingkan or pd.isna(cur[kolom]) or pd.isna(prev[kolom]):
+        return None
+    return theme.fmt_delta(float(cur[kolom]) - float(prev[kolom]), 1, " poin")
 
 
 # ------------------------------------------------------------------ kartu KPI
@@ -54,7 +64,7 @@ c3.metric("Nuklir dan lainnya (sisa)", theme.fmt_pct(cur["sisa_tampil"]), d_poin
           help="Sisa = 100 - pangsa fosil - pangsa terbarukan, dihitung dari angka yang tampil sehingga ketiga kartu "
                "berjumlah 100,0%. Mencakup nuklir dan sumber lain di luar dua kategori utama; bukan pangsa nuklir "
                "saja. Nilai tertimbang yang tidak dibulatkan dapat berbeda hingga 0,1 poin.")
-c4.metric("Negara dalam perhitungan", f"{int(cur['negara_berbobot'])} dari {n_total}",
+c4.metric("Negara dalam perhitungan", f"{n_berbobot} dari {n_total}",
           help="Negara yang pangsa fosil dan terbarukannya terisi dan pembangkitannya lebih dari 0. Negara tanpa "
                "nilai tidak ikut dihitung dan tidak diisi dengan perkiraan.")
 st.caption(f"{scope_label}. Tahun {year}" + (f" dibandingkan {base}." if bandingkan else
@@ -62,6 +72,9 @@ st.caption(f"{scope_label}. Tahun {year}" + (f" dibandingkan {base}." if banding
 
 # ------------------------------------------------------------------ tren fosil vs terbarukan
 st.subheader("Perkembangan pangsa fosil dan terbarukan")
+components.micro_guide(
+    "Amati jarak antara garis fosil (abu gelap) dan terbarukan (hijau) untuk melihat pergeseran porsi pembangkitan dari tahun ke tahun."
+)
 tahun_list = kpi["year"].astype(int).tolist()
 seri = [dict(name="Pangsa fosil", values=kpi["fosil_bulat"].tolist(), color=theme.COLOR_FOSSIL, width=3),
         dict(name="Pangsa terbarukan", values=kpi["terbarukan_bulat"].tolist(), color=theme.COLOR_RENEWABLE, width=3)]
@@ -71,31 +84,47 @@ if bandingkan:
                f"terbarukan berubah {d_poin('terbarukan_bulat')}. Keduanya tidak berjumlah 100% karena ada sumber "
                f"lain (nuklir dan lainnya: {theme.fmt_pct(cur['sisa_tampil'])} pada {year}). Garis menunjukkan pola "
                f"dari data, bukan penyebab perubahannya.")
+    components.insight_box(
+        f"Pada {tren_label.lower()} ({year}), pangsa fosil berada di {theme.fmt_pct(cur['fosil_bulat'])} "
+        f"({d_poin('fosil_bulat')} terhadap {base}) dan terbarukan di {theme.fmt_pct(cur['terbarukan_bulat'])} "
+        f"({d_poin('terbarukan_bulat')})."
+    )
 else:
     st.caption("Dua garis ditampilkan terpisah (tidak ditumpuk) karena keduanya tidak berjumlah 100%. "
                "Garis menunjukkan pola dari data, bukan penyebab perubahannya.")
 
-# ------------------------------------------------------------------ dumbbell fosil: pembangkit terbesar
+# ------------------------------------------------------------------ perbandingan fosil: pembangkit terbesar (Grouped Bar / Dumbbell)
 st.subheader("Pangsa fosil pada negara dengan pembangkitan listrik terbesar")
-n_top = st.radio("Jumlah negara", [5, 10, 15], index=1, horizontal=True, key="b_topn")
+ctrl1, ctrl2 = st.columns([2, 3])
+with ctrl1:
+    n_top = st.radio("Jumlah negara", [5, 10, 15], index=1, horizontal=True, key="b_topn")
+with ctrl2:
+    mode_b = st.radio("Tampilan grafik", ["Batang berdampingan", "Garis rentang (Dumbbell)"], index=0, horizontal=True, key="b_chart_mode",
+                      help="Batang berdampingan memudahkan perbandingan langsung dua tahun; Garis rentang menonjolkan jarak perubahannya.")
 if not bandingkan:
     st.info(f"Pilih tahun setelah {base} di sidebar untuk membandingkan pangsa fosil dengan {base}.")
 else:
     top = db.safe(queries.b_topn, year, f["continents"], f["groups"], n_top)
     if top.empty:
-        st.info("Tidak ada negara yang memenuhi filter ini.")
+        components.empty_state("Tidak ada negara yang memenuhi filter ini.")
     else:
         top = top.copy()
         top["label"] = [n + (" ★" if iso == f["country"] else "") for iso, n in zip(top["iso3_code"], top["country_name"])]
-        st.plotly_chart(charts.dumbbell(top, "label", "fosil_awal", "fosil_tahun", str(base), str(year),
-                                        COLOR_BASE, theme.COLOR_FOSSIL, "Pangsa listrik fosil (%)"), width="stretch")
+        components.micro_guide(
+            f"Batang abu muda menunjukkan pangsa fosil {base} dan batang gelap menunjukkan {year}; urutan daftar mengikuti total pembangkitan listrik terbesar."
+        )
+        if mode_b == "Batang berdampingan":
+            st.plotly_chart(charts.grouped_fossil_bar(top, base, year), width="stretch")
+        else:
+            st.plotly_chart(charts.dumbbell(top, "label", "fosil_awal", "fosil_tahun", str(base), str(year),
+                                            COLOR_BASE, theme.COLOR_FOSSIL, "Pangsa listrik fosil (%)"), width="stretch")
         ok = top.dropna(subset=["fosil_awal", "fosil_tahun"])
         turun, naik, sama = int((ok["perubahan"] < 0).sum()), int((ok["perubahan"] > 0).sum()), int((ok["perubahan"] == 0).sum())
         tanpa = len(top) - len(ok)
         st.caption(f"Negara diurutkan menurut pembangkitan listrik {year} dari yang terbesar, bukan menurut pangsa fosil. "
                    f"Dari {len(top)} negara: {turun} berpangsa fosil lebih rendah daripada {base}, {naik} lebih tinggi, "
                    f"{sama} sama" + (f"; {tanpa} tanpa data pada salah satu tahun" if tanpa else "") +
-                   f". Titik abu-abu = {base}, titik gelap = {year}. Tanda ★ = negara sorotan di sidebar (jika masuk "
+                   f". Abu-abu muda = {base}, gelap = {year}. Tanda ★ = negara sorotan di sidebar (jika masuk "
                    f"daftar).")
         with st.expander("Lihat angka"):
             st.dataframe(pd.DataFrame({
@@ -110,28 +139,31 @@ else:
 # ------------------------------------------------------------------ listrik vs energi primer
 st.subheader("Pangsa terbarukan: listrik vs energi primer")
 cov = db.safe(queries.b_coverage, year)
-n_all, n_primer, n_pasang = int(cov["negara"].sum()), int(cov["berdata_primer"].sum()), int(cov["pasangan_valid"].sum())
+n_all = 0 if cov.empty else int(cov["negara"].sum())
+n_primer = 0 if cov.empty else int(cov["berdata_primer"].sum())
+n_pasang = 0 if cov.empty else int(cov["pasangan_valid"].sum())
 st.info(f"Cakupan energi primer: {n_primer} negara pada {year} (dari {n_all} negara di data). Sebanyak {n_pasang} di "
         f"antaranya juga punya pangsa listrik sehingga dapat dibandingkan. Sampel ini tidak mewakili seluruh dunia, "
         f"jadi tidak ada angka agregat dunia atau benua untuk energi primer; yang ditampilkan adalah nilai per negara.")
-urut = sorted(cov["benua"], key=lambda b: (b == UNK, b))
-cov_t = cov.set_index("benua").loc[urut].reset_index()
-cov_t["persen"] = cov_t["berdata_primer"] / cov_t["negara"] * 100
-with st.expander("Sebaran cakupan energi primer per benua (seluruh negara, tidak dipengaruhi filter)"):
-    st.dataframe(pd.DataFrame({"Benua": cov_t["benua"], "Jumlah negara": cov_t["negara"],
-                               "Berdata energi primer": cov_t["berdata_primer"],
-                               "Persentase (%)": cov_t["persen"]}), hide_index=True, width="stretch",
-                 column_config={"Persentase (%)": st.column_config.NumberColumn(format="%.1f")})
+if not cov.empty:
+    urut = sorted(cov["benua"], key=lambda b: (b == UNK, b))
+    cov_t = cov.set_index("benua").loc[urut].reset_index()
+    cov_t["persen"] = cov_t["berdata_primer"] / cov_t["negara"] * 100
+    with st.expander("Sebaran cakupan energi primer per benua (seluruh negara, tidak dipengaruhi filter)"):
+        st.dataframe(pd.DataFrame({"Benua": cov_t["benua"], "Jumlah negara": cov_t["negara"],
+                                   "Berdata energi primer": cov_t["berdata_primer"],
+                                   "Persentase (%)": cov_t["persen"]}), hide_index=True, width="stretch",
+                     column_config={"Persentase (%)": st.column_config.NumberColumn(format="%.1f")})
 
 pairs = db.safe(queries.b_pairs, year, f["continents"], f["groups"])
 if pairs.empty:
-    st.info("Tidak ada negara berdata energi primer pada filter ini.")
+    components.empty_state("Tidak ada negara berdata energi primer pada filter ini.")
 else:
     valid = pairs[pairs["terbarukan_listrik"].notna()].copy()
     n_pair = st.selectbox("Jumlah negara pada grafik", [5, 10, 15, 20], index=1, key="b_pair_n",
                           help="Negara berpasangan data dengan pembangkitan listrik terbesar pada tahun terpilih.")
     if valid.empty:
-        st.info("Tidak ada negara berpasangan data pada filter ini.")
+        components.empty_state("Tidak ada negara berpasangan data pada filter ini.")
     else:
         g = valid.head(n_pair).copy()
         g["label"] = [n + (" ★" if iso == f["country"] else "") for iso, n in zip(g["iso3_code"], g["country_name"])]
@@ -178,5 +210,5 @@ with st.expander("Sumber data dan query"):
                 "Parameter dikirim terpisah dari teks SQL.")
     st.markdown("**KPI dan tren (fosil, terbarukan, sisa):**")
     st.code(queries.B_KPI_SQL, language="sql")
-    st.markdown("**Negara dengan pembangkitan terbesar (dumbbell fosil):**")
+    st.markdown("**Negara dengan pembangkitan terbesar (perbandingan fosil):**")
     st.code(queries.B_TOPN_SQL, language="sql")

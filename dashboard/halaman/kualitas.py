@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import components
 import db
 import queries
 import theme
@@ -20,6 +21,15 @@ def n_(x) -> str:
     return theme.fmt_num(x, 0)
 
 
+chips = components.active_filter_chips(
+    year, f["continents"], f["continents"], f["groups"], f["groups"], ignore_region=True
+)
+components.hero_banner(
+    "Kualitas Data",
+    "Transparansi kelengkapan data, nilai kosong, perbandingan dua sumber, metode pembobotan, dan status ETL.",
+    chips=chips,
+    variant="quality",
+)
 st.title("Kualitas Data")
 st.caption("Seberapa lengkap data yang dipakai dashboard, di mana nilainya kosong, dan bagaimana sumber serta cara "
            "menghitung memengaruhi angka. Halaman ini menampilkan seluruh data dan tidak dipengaruhi filter benua dan "
@@ -28,10 +38,66 @@ st.caption("Seberapa lengkap data yang dipakai dashboard, di mana nilainya koson
 
 cover = db.safe(queries.k_cover)
 if cover.empty or year not in set(cover["year"]):
-    st.info("Data kualitas belum tersedia. Pastikan ETL sudah dijalankan dan view mart sudah dibuat.")
+    components.empty_state("Data kualitas belum tersedia. Pastikan ETL sudah dijalankan dan view mart sudah dibuat.")
     st.stop()
 cy = cover[cover["year"] == year].set_index("kode")
 master = int(cy["negara_master"].iloc[0])
+
+# Data ringkas untuk 3 kartu status visual di bagian atas (menjawab R09)
+rec = db.safe(queries.k_recon).set_index("year")
+gen = db.safe(queries.k_recon_gen).set_index("year")
+etl = db.safe(queries.etl_status)
+cek_awal = [
+    ("Tidak ada negara-tahun ganda pada v_country_year (baris = negara unik)", (rec["n_cy"] == rec["n_cy_iso"]).tolist()),
+    ("Jumlah negara master sama di semua tahun", [rec["n_cy"].nunique() == 1] * len(rec)),
+    ("Baris v_source_comparison = negara yang ada di kedua sumber", (rec["n_cmp"] == rec["n_both"]).tolist()),
+    ("Negara pada bauran pembangkitan = negara yang punya baris Ember", (rec["negara_mix"] == rec["n_ember"]).tolist()),
+    (f"Jumlah semua sumber = total pembangkitan Ember per negara (selisih maksimum {theme.fmt_num(TOL, 2)} TWh)",
+     [bool(gen.loc[y, "selisih_maks"] <= TOL) if (y in gen.index and pd.notna(gen.loc[y, "selisih_maks"])) else False for y in rec.index]),
+]
+n_ok_awal = sum(1 for _, hasil in cek_awal if all(hasil))
+cov_ren = float(cy.loc["pangsa_listrik_ren", "coverage"]) if "pangsa_listrik_ren" in cy.index else None
+etl_val = f"Run #{int(etl.iloc[0]['run_id'])}" if not etl.empty else "Belum tersedia"
+etl_note = (etl.iloc[0]["finished_at"].to_pydatetime().astimezone().strftime("%d-%m-%Y %H:%M")
+            if not etl.empty else "Jalankan proses ETL untuk memuat data.")
+
+components.status_cards([
+    {
+        "eyebrow": f"Kelengkapan indikator utama ({year})",
+        "value": theme.fmt_pct(cov_ren) if cov_ren is not None else "tidak ada data",
+        "note": "Cakupan pangsa listrik terbarukan (Renewable) terhadap seluruh negara master.",
+    },
+    {
+        "eyebrow": "Konsistensi antar-view mart",
+        "value": f"{n_ok_awal} dari {len(cek_awal)} lulus",
+        "note": "Memeriksa keunikan baris, kesesuaian cakupan sumber, dan penjumlahan bauran.",
+        "warn": n_ok_awal < len(cek_awal),
+    },
+    {
+        "eyebrow": "Sinkronisasi ETL terakhir",
+        "value": etl_val,
+        "note": f"Selesai: {etl_note}",
+        "warn": etl.empty,
+    },
+])
+
+components.glossary_box(
+    "Kamus Istilah Singkat (Panduan Pembaca)",
+    [
+        (
+            "Negara Master",
+            "Daftar seluruh negara yang tercatat pada data warehouse per tahun, termasuk negara yang sebagian indikatornya kosong di salah satu sumber.",
+        ),
+        (
+            "Rata-rata Tertimbang",
+            "Perhitungan yang memberi bobot sesuai besar pembangkitan listrik tiap negara, sehingga mencerminkan total listrik gabungan, bukan rata-rata per negara.",
+        ),
+        (
+            "Ember vs Renewable",
+            "Dua himpunan data terpisah yang dipakai sesuai cakupan indikatornya; keduanya tidak dicampur dalam satu rumus agar setiap angka tetap konsisten.",
+        ),
+    ],
+)
 
 # ------------------------------------------------------------------ kartu ringkas (tahun terpilih)
 k1, k2, k3, k4 = st.columns(4)
@@ -61,6 +127,9 @@ tab_c, tab_m, tab_s, tab_r, tab_k = st.tabs(["Cakupan", "Nilai kosong", "Ember v
 # ------------------------------------------------------------------ tab 1: cakupan
 with tab_c:
     st.subheader(f"Cakupan negara per indikator, {year}")
+    components.micro_guide(
+        "Panjang batang menunjukkan persentase negara master yang memiliki nilai non-kosong untuk setiap indikator."
+    )
     st.plotly_chart(charts.coverage_bar(cover[cover["year"] == year], year), width="stretch")
     st.caption("'Negara master' adalah seluruh negara pada data warehouse; 'tersedia' adalah negara yang punya nilai "
                "(bukan kosong) untuk indikator itu. Keduanya sengaja dipisahkan: negara bisa ada di master tetapi tidak "
@@ -189,23 +258,28 @@ with tab_r:
     mean = db.safe(queries.k_mean)
     tahun_list = [int(y) for y in mean["year"]]
     st.subheader("Pangsa listrik terbarukan: rata-rata negara vs tertimbang pembangkitan")
-    sel = float(mean.loc[mean["year"] == year, "pangsa_tertimbang"].iloc[0])
-    sed = float(mean.loc[mean["year"] == year, "pangsa_sederhana"].iloc[0])
+    sel_s = mean.loc[mean["year"] == year, "pangsa_tertimbang"]
+    sed_s = mean.loc[mean["year"] == year, "pangsa_sederhana"]
+    sel = float(sel_s.iloc[0]) if (len(sel_s) and pd.notna(sel_s.iloc[0])) else None
+    sed = float(sed_s.iloc[0]) if (len(sed_s) and pd.notna(sed_s.iloc[0])) else None
     m1, m2, m3 = st.columns(3)
     m1.metric("Rata-rata sederhana antarnegara", theme.fmt_pct(sed), help="Setiap negara diberi bobot sama, berapa pun "
               "besar pembangkitannya.")
     m2.metric("Tertimbang pembangkitan", theme.fmt_pct(sel), help="Setiap negara diberi bobot sebesar pembangkitan listriknya "
               "(Renewable). Ini definisi KPI pada halaman Ringkasan, A, dan B.")
-    m3.metric("Selisih (sederhana dikurangi tertimbang)", theme.fmt_delta(round(sed - sel, 1), 1, " poin"), delta_color="off",
-              help="Dihitung dari angka yang ditampilkan.")
+    selisih_m = round(sed - sel, 1) if (sed is not None and sel is not None) else None
+    m3.metric("Selisih (sederhana dikurangi tertimbang)",
+              theme.fmt_delta(selisih_m, 1, " poin") if selisih_m is not None else "tidak ada data",
+              delta_color="off", help="Dihitung dari angka yang ditampilkan.")
     st.caption(f"Tahun {year}. Rata-rata sederhana menjawab 'berapa pangsa terbarukan rata-rata sebuah negara', sedangkan "
                f"rata-rata tertimbang menjawab 'berapa pangsa terbarukan dari seluruh listrik yang dihasilkan'. Keduanya "
                f"benar untuk pertanyaannya masing-masing dan tidak dapat saling menggantikan; pada {year} selisihnya "
-               f"{theme.fmt_delta(round(sed - sel, 1), 1, ' poin')}.")
+               f"{theme.fmt_delta(selisih_m, 1, ' poin') if selisih_m is not None else 'tidak ada data'}.")
     tabel_m = pd.DataFrame({
         "Tahun": tahun_list, "Negara dalam perhitungan": mean["n_pangsa_berbobot"].astype(int),
         "Rata-rata sederhana (%)": mean["pangsa_sederhana"], "Tertimbang pembangkitan (%)": mean["pangsa_tertimbang"],
-        "Selisih (poin)": [round(a - b, 1) for a, b in zip(mean["pangsa_sederhana"], mean["pangsa_tertimbang"])]})
+        "Selisih (poin)": [round(a - b, 1) if (pd.notna(a) and pd.notna(b)) else None
+                           for a, b in zip(mean["pangsa_sederhana"], mean["pangsa_tertimbang"])]})
     ca, cb = st.columns([3, 2])
     with ca:
         st.dataframe(tabel_m, hide_index=True, width="stretch", column_config={
@@ -222,7 +296,8 @@ with tab_r:
         "Tahun": tahun_list, "Negara dalam perhitungan": mean["n_intensitas_berbobot"].astype(int),
         "Rata-rata sederhana (gCO₂e/kWh)": mean["intensitas_sederhana"],
         "Tertimbang pembangkitan (gCO₂e/kWh)": mean["intensitas_tertimbang"],
-        "Selisih": [round(a - b, 0) for a, b in zip(mean["intensitas_sederhana"], mean["intensitas_tertimbang"])]})
+        "Selisih": [round(a - b, 0) if (pd.notna(a) and pd.notna(b)) else None
+                    for a, b in zip(mean["intensitas_sederhana"], mean["intensitas_tertimbang"])]})
     st.dataframe(tabel_i, hide_index=True, width="stretch", column_config={
         "Tahun": st.column_config.NumberColumn(format="%d"),
         **{c: st.column_config.NumberColumn(format="%.0f") for c in
@@ -233,34 +308,28 @@ with tab_r:
     tabel_b = pd.DataFrame({
         "Tahun": tahun_list, "Bobot pembangkitan Renewable (%)": mean["pangsa_tertimbang_2"],
         "Bobot pembangkitan Ember (%)": mean["pangsa_bobot_ember_2"],
-        "Selisih (poin)": [round(a - b, 2) for a, b in zip(mean["pangsa_tertimbang_2"], mean["pangsa_bobot_ember_2"])]})
+        "Selisih (poin)": [round(a - b, 2) if (pd.notna(a) and pd.notna(b)) else None
+                           for a, b in zip(mean["pangsa_tertimbang_2"], mean["pangsa_bobot_ember_2"])]})
     st.dataframe(tabel_b, hide_index=True, width="stretch", column_config={
         "Tahun": st.column_config.NumberColumn(format="%d"),
         **{c: st.column_config.NumberColumn(format="%.2f") for c in
            ["Bobot pembangkitan Renewable (%)", "Bobot pembangkitan Ember (%)", "Selisih (poin)"]}})
-    maks = max(abs(v) for v in tabel_b["Selisih (poin)"])
+    selisih_valid = [abs(v) for v in tabel_b["Selisih (poin)"] if pd.notna(v)]
+    maks = max(selisih_valid) if selisih_valid else 0.0
     st.caption(f"Pangsa Renewable yang sama dibobot dengan dua ukuran pembangkitan yang berbeda (Renewable dan Ember). "
                f"Selisih terbesar antartahun {theme.fmt_num(maks, 2)} poin; ditampilkan 2 desimal karena selisihnya kecil.")
 
 # ------------------------------------------------------------------ tab 5: konsistensi dan ETL
 with tab_k:
-    rec = db.safe(queries.k_recon).set_index("year")
-    gen = db.safe(queries.k_recon_gen).set_index("year")
-    cek = [
-        ("Tidak ada negara-tahun ganda pada v_country_year (baris = negara unik)", (rec["n_cy"] == rec["n_cy_iso"]).tolist()),
-        ("Jumlah negara master sama di semua tahun", [rec["n_cy"].nunique() == 1] * len(rec)),
-        ("Baris v_source_comparison = negara yang ada di kedua sumber", (rec["n_cmp"] == rec["n_both"]).tolist()),
-        ("Negara pada bauran pembangkitan = negara yang punya baris Ember", (rec["negara_mix"] == rec["n_ember"]).tolist()),
-        (f"Jumlah semua sumber = total pembangkitan Ember per negara (selisih maksimum {theme.fmt_num(TOL, 2)} TWh)",
-         [bool(gen.loc[y, "selisih_maks"] <= TOL) if y in gen.index else False for y in rec.index]),
-    ]
-    tabel_k = pd.DataFrame({"Pemeriksaan": [c[0] for c in cek], "Tahun lulus": [f"{sum(c[1])} dari {len(c[1])}" for c in cek],
-                            "Status": ["OK" if all(c[1]) else "BEDA" for c in cek]})
+    tabel_k = pd.DataFrame({"Pemeriksaan": [c[0] for c in cek_awal], "Tahun lulus": [f"{sum(c[1])} dari {len(c[1])}" for c in cek_awal],
+                            "Status": ["OK" if all(c[1]) else "BEDA" for c in cek_awal]})
     n_ok = int((tabel_k["Status"] == "OK").sum())
     st.subheader("Konsistensi antar-view mart")
     kk1, kk2 = st.columns(2)
     kk1.metric("Pemeriksaan konsistensi lulus", f"{n_ok} dari {len(tabel_k)}")
-    kk2.metric("Selisih maksimum penjumlahan bauran", f"{theme.fmt_num(float(gen['selisih_maks'].max()), 3)} TWh",
+    maks_bauran = float(gen["selisih_maks"].max()) if (not gen.empty and gen["selisih_maks"].notna().any()) else None
+    kk2.metric("Selisih maksimum penjumlahan bauran",
+               f"{theme.fmt_num(maks_bauran, 3)} TWh" if maks_bauran is not None else "tidak ada data",
                help=f"Selisih terbesar antara jumlah semua sumber dan total pembangkitan Ember pada satu negara-tahun. "
                     f"Toleransi {theme.fmt_num(TOL, 2)} TWh adalah keputusan desain.")
     st.dataframe(tabel_k, hide_index=True, width="stretch")
@@ -279,7 +348,6 @@ with tab_k:
                "tidak dimiliki akun dashboard, sehingga dijalankan sebagai query independen di `sql/100_validate_quality.sql` "
                "oleh pengguna `postgres`.")
     st.subheader("Proses ETL terakhir")
-    etl = db.safe(queries.etl_status)
     yrs = db.safe(queries.k_years).iloc[0]
     if etl.empty:
         st.info("Status ETL belum tersedia.")

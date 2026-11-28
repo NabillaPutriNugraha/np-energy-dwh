@@ -12,22 +12,27 @@ def _clean(values):
 
 def trend_chart(years, scope_values, scope_label, country_values, country_label,
                 y_title, color, dec=1, suffix=""):
-    """Garis tren per tahun: agregat negara terpilih + satu negara sorotan."""
+    """Garis tren spline per tahun dengan arsiran transparan: agregat negara terpilih + satu negara sorotan."""
     fig = go.Figure()
-    series = [(scope_values, scope_label, color, "solid", 3)]
+    fill_col = "rgba(13, 148, 136, 0.16)" if color == theme.COLOR_RENEWABLE else "rgba(213, 94, 0, 0.12)"
+    series = [(scope_values, scope_label, color, "solid", 3, "tozeroy", fill_col)]
     if country_values is not None:
-        series.append((country_values, country_label, theme.COLOR_HIGHLIGHT, "dash", 2))
-    for values, name, col, dash, width in series:
+        series.append((country_values, country_label, theme.COLOR_HIGHLIGHT, "dash", 2.2, None, None))
+    for values, name, col, dash, width, fill_mode, fcol in series:
         values = _clean(list(values))
         hover = [f"{name}<br>{int(y)}: {theme.fmt_num(v, dec)}{suffix}" if v is not None
                  else f"{name}<br>{int(y)}: tidak ada data" for y, v in zip(years, values)]
-        fig.add_trace(go.Scatter(x=list(years), y=values, name=name, mode="lines+markers",
-                                 line=dict(color=col, width=width, dash=dash), marker=dict(size=8),
-                                 hovertext=hover, hoverinfo="text"))
+        kw = dict(fill=fill_mode, fillcolor=fcol) if fill_mode else {}
+        fig.add_trace(go.Scatter(
+            x=list(years), y=values, name=name, mode="lines+markers",
+            line=dict(color=col, width=width, dash=dash, shape="spline", smoothing=0.55),
+            marker=dict(size=8, line=dict(color="white", width=1.5)),
+            hovertext=hover, hoverinfo="text", **kw,
+        ))
     fig.update_layout(height=330, margin=dict(l=10, r=10, t=10, b=10),
                       legend=dict(orientation="h", yanchor="top", y=-0.18, x=0),
                       xaxis=dict(dtick=1, tickformat="d", title=None),
-                      yaxis=dict(title=y_title, rangemode="tozero", gridcolor="#E5E7EB"),
+                      yaxis=dict(title=y_title, rangemode="tozero", gridcolor="#E6EFEA"),
                       plot_bgcolor="white")
     return fig
 
@@ -42,22 +47,65 @@ def movers_bar(df):
                            marker_color=theme.COLOR_RENEWABLE,
                            text=[theme.fmt_delta(v, 1) for v in d["perubahan"]], textposition="outside",
                            hovertext=hover, hoverinfo="text", cliponaxis=False))
-    fig.update_layout(height=380, margin=dict(l=10, r=40, t=10, b=10), plot_bgcolor="white",
-                      xaxis=dict(title="Perubahan pangsa (poin persentase)", gridcolor="#E5E7EB",
+    fig.update_layout(height=380, margin=dict(l=10, r=44, t=10, b=10), plot_bgcolor="white",
+                      xaxis=dict(title="Perubahan pangsa (poin persentase)", gridcolor="#E6EFEA",
                                  rangemode="tozero"),
                       yaxis=dict(title=None))
     return fig
 
 
+MAP_COLORSCALE = [
+    [0.0, "#FEF3C7"], [0.2, "#FEF3C7"],
+    [0.2, "#99F6E4"], [0.4, "#99F6E4"],
+    [0.4, "#2DD4BF"], [0.6, "#2DD4BF"],
+    [0.6, "#059669"], [0.8, "#059669"],
+    [0.8, "#064E3B"], [1.0, "#064E3B"],
+]
+
+
+def _kelas_pangsa(val: float) -> str:
+    if val < 20:
+        return "0–20%"
+    if val < 40:
+        return "20–40%"
+    if val < 60:
+        return "40–60%"
+    if val < 80:
+        return "60–80%"
+    return "80–100%"
+
+
 def share_map(df):
-    """Peta choropleth pangsa listrik terbarukan per negara (kode ISO3)."""
-    hover = [f"{r.country_name}<br>{theme.fmt_num(r.pangsa, 1)}% listrik terbarukan" for r in df.itertuples()]
-    fig = go.Figure(go.Choropleth(locations=df["iso3_code"], z=df["pangsa"], zmin=0, zmax=100,
-                                  colorscale="Greens", text=hover, hoverinfo="text",
-                                  marker_line_color="#FFFFFF", marker_line_width=0.4,
-                                  colorbar=dict(title=dict(text="% listrik<br>terbarukan", side="top"), thickness=12, len=0.62, y=0.42, ypad=12, tickfont=dict(size=11))))
-    fig.update_geos(showframe=False, showcoastlines=False, projection_type="natural earth",
-                    bgcolor="rgba(0,0,0,0)")
+    """Peta choropleth pangsa listrik terbarukan per negara (kode ISO3) dengan 5 kelas warna diskrit per 20%."""
+    hover = [
+        f"<b>{r.country_name}</b><br>Pangsa terbarukan: {theme.fmt_num(r.pangsa, 1)}%<br>"
+        f"Kelompok: {_kelas_pangsa(float(r.pangsa))}"
+        for r in df.itertuples()
+    ]
+    fig = go.Figure(go.Choropleth(
+        locations=df["iso3_code"], z=df["pangsa"], zmin=0, zmax=100,
+        colorscale=MAP_COLORSCALE, text=hover, hoverinfo="text",
+        marker_line_color="#64748B", marker_line_width=0.6,
+        colorbar=dict(
+            title=dict(text="% listrik<br>terbarukan", side="top"),
+            thickness=13, len=0.68, y=0.48, ypad=10,
+            tickmode="array", tickvals=[10, 30, 50, 70, 90],
+            ticktext=["0–20%", "20–40%", "40–60%", "60–80%", "80–100%"],
+            tickfont=dict(size=10.5),
+        ),
+    ))
+    fig.update_geos(
+        showframe=False, showcoastlines=True, coastlinecolor="#CBD5E1",
+        showcountries=True, countrycolor="#94A3B8",
+        showland=True, landcolor="#E2E8F0",
+        projection_type="natural earth", bgcolor="rgba(0,0,0,0)",
+    )
+    fig.add_annotation(
+        x=0.01, y=0.01, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
+        text="■ Abu-abu = Tidak ada data", showarrow=False,
+        font=dict(size=10.5, color="#475569"),
+        bgcolor="rgba(255,255,255,0.9)", bordercolor="#CBD5E1", borderwidth=1, borderpad=4,
+    )
     fig.update_layout(height=380, margin=dict(l=0, r=0, t=0, b=0))
     return fig
 
@@ -89,7 +137,7 @@ def multi_trend(years, series, y_title, dec=1, suffix="%", height=360):
     fig.update_layout(height=height, margin=dict(l=10, r=10, t=10, b=10),
                       legend=dict(orientation="h", yanchor="top", y=-0.15, x=0),
                       xaxis=dict(dtick=1, tickformat="d", title=None),
-                      yaxis=dict(title=y_title, rangemode="tozero", gridcolor="#E5E7EB"),
+                      yaxis=dict(title=y_title, rangemode="tozero", gridcolor="#E6EFEA"),
                       plot_bgcolor="white")
     return fig
 
@@ -105,13 +153,13 @@ def rank_bar(df, color=None):
                            hovertext=hover, hoverinfo="text", cliponaxis=False))
     fig.update_layout(height=380, margin=dict(l=10, r=50, t=10, b=10), plot_bgcolor="white",
                       xaxis=dict(title="Pangsa listrik terbarukan (%)", range=[0, 112],
-                                 tickvals=[0, 20, 40, 60, 80, 100], gridcolor="#E5E7EB"),
+                                 tickvals=[0, 20, 40, 60, 80, 100], gridcolor="#E6EFEA"),
                       yaxis=dict(title=None))
     return fig
 
 
 # =====================================================================================
-# Grafik tambahan Halaman B (Fase 4-3b)
+# Grafik tambahan Halaman B (Fase 4-3b & Redesign R12)
 # =====================================================================================
 def dumbbell(df, label_col, a_col, b_col, a_name, b_name, a_color, b_color, x_title, dec=1, unit="%"):
     """Dumbbell: dua titik per baris dihubungkan garis. Baris yang salah satu nilainya kosong hanya
@@ -134,13 +182,42 @@ def dumbbell(df, label_col, a_col, b_col, a_name, b_name, a_color, b_color, x_ti
                                  hovertext=hover, hoverinfo="text"))
     fig.update_layout(height=max(300, 70 + 34 * len(labels)), margin=dict(l=10, r=20, t=10, b=10),
                       plot_bgcolor="white", legend=dict(orientation="h", yanchor="top", y=-0.12, x=0),
-                      xaxis=dict(title=x_title, range=[0, 100], gridcolor="#E5E7EB"),
+                      xaxis=dict(title=x_title, range=[0, 100], gridcolor="#E6EFEA"),
                       yaxis=dict(title=None, categoryorder="array", categoryarray=labels, autorange="reversed"))
     return fig
 
 
+def grouped_fossil_bar(df, base, year):
+    """Batang horizontal berdampingan (Grouped Bar Chart) pangsa fosil tahun pembanding vs tahun terpilih.
+    Urutan baris mengikuti urutan df (atas ke bawah, menurut pembangkitan listrik terbesar)."""
+    labels = list(df["label"])
+    v_base = _clean(list(df["fosil_awal"]))
+    v_year = _clean(list(df["fosil_tahun"]))
+    fig = go.Figure()
+    for vals, nama, warna in (
+        (v_base, str(base), "#94A3B8"),
+        (v_year, str(year), "#475569"),
+    ):
+        hover = [f"{lab}<br>Pangsa fosil {nama}: {theme.fmt_pct(v, 1)}" if v is not None
+                 else f"{lab}<br>Pangsa fosil {nama}: tidak ada data" for lab, v in zip(labels, vals)]
+        txt = [theme.fmt_pct(v, 1) if v is not None else "" for v in vals]
+        fig.add_trace(go.Bar(
+            y=labels, x=vals, name=nama, orientation="h", marker_color=warna,
+            text=txt, textposition="outside", textfont=dict(size=10.5),
+            hovertext=hover, hoverinfo="text", cliponaxis=False,
+        ))
+    fig.update_layout(
+        barmode="group", bargap=0.24, bargroupgap=0.08,
+        height=max(340, 80 + 44 * len(labels)), margin=dict(l=10, r=52, t=10, b=10),
+        plot_bgcolor="white", legend=dict(orientation="h", yanchor="top", y=-0.1, x=0),
+        xaxis=dict(title="Pangsa listrik fosil (%)", range=[0, 112], tickvals=[0, 20, 40, 60, 80, 100], gridcolor="#E6EFEA"),
+        yaxis=dict(title=None, categoryorder="array", categoryarray=labels, autorange="reversed"),
+    )
+    return fig
+
+
 # =====================================================================================
-# Grafik tambahan Halaman C (Fase 4-3c): bauran pembangkitan
+# Grafik tambahan Halaman C (Fase 4-3c & Redesign M09/T10): bauran pembangkitan
 # Daftar kategori dan sumber berasal dari DATA. Kamus di bawah HANYA untuk label berbahasa Indonesia, warna, dan
 # urutan tampilan; nama yang tidak ada di kamus tetap dipakai apa adanya (tidak ada nama yang diciptakan).
 # =====================================================================================
@@ -148,10 +225,19 @@ KATEGORI_LABEL = {"Fossil": "Fosil", "Nuklir": "Nuklir", "Renewable": "Terbaruka
 SUMBER_LABEL = {"Coal": "Batu bara", "Gas": "Gas", "Other fossil": "Fosil lainnya", "Nuclear": "Nuklir",
                 "Bioenergy": "Bioenergi", "Hydro": "Tenaga air", "Solar": "Surya", "Wind": "Angin",
                 "Other renewables": "Terbarukan lainnya"}
-KATEGORI_COLOR = {"Fossil": "#4D4D4D", "Nuklir": "#CC79A7", "Renewable": "#009E73"}
-SUMBER_COLOR = {"Coal": "#2F2F2F", "Gas": "#7A7A7A", "Other fossil": "#B5B5B5", "Nuclear": "#CC79A7",
-                "Hydro": "#0072B2", "Wind": "#56B4E9", "Solar": "#E69F00", "Bioenergy": "#8C6D31",
-                "Other renewables": "#882255"}
+KATEGORI_COLOR = {"Fossil": theme.COLOR_FOSSIL, "Nuklir": theme.COLOR_NUCLEAR, "Renewable": theme.COLOR_RENEWABLE}
+# Palet cerah & kontras tinggi (M09) untuk 9 sumber pembangkitan
+SUMBER_COLOR = {
+    "Coal": "#475569",              # Slate (Batu bara)
+    "Gas": "#F97316",               # Orange (Gas)
+    "Other fossil": "#8B5CF6",      # Violet (Fosil lainnya / Minyak)
+    "Nuclear": "#DB2777",           # Pink/Magenta (Nuklir)
+    "Hydro": "#2563EB",             # Blue (Tenaga air / Hidro)
+    "Wind": "#06B6D4",              # Cyan (Angin)
+    "Solar": "#F59E0B",             # Amber (Surya)
+    "Bioenergy": "#10B981",         # Emerald (Bioenergi)
+    "Other renewables": "#0D9488",  # Teal (Terbarukan lainnya)
+}
 _KATEGORI_URUT = ["Fossil", "Nuklir", "Renewable"]
 _CADANGAN = ["#999999", "#BBBBBB", "#777777", "#DDDDDD"]   # untuk nama yang tidak ada di kamus
 
@@ -191,10 +277,10 @@ def stacked_share(categories, series, axis_title, horizontal=False, height=None)
                       margin=dict(l=10, r=10, t=10, b=10),
                       legend=dict(orientation="h", yanchor="top", y=-0.18 if not horizontal else -0.3, x=0))
     if horizontal:
-        fig.update_xaxes(title=axis_title, range=[0, 100], gridcolor="#E5E7EB")
+        fig.update_xaxes(title=axis_title, range=[0, 100], gridcolor="#E6EFEA")
         fig.update_yaxes(title=None, autorange="reversed")
     else:
-        fig.update_yaxes(title=axis_title, range=[0, 100], gridcolor="#E5E7EB")
+        fig.update_yaxes(title=axis_title, range=[0, 100], gridcolor="#E6EFEA")
         fig.update_xaxes(title=None, dtick=1, tickformat="d")
     return fig
 
@@ -226,7 +312,7 @@ def mix_treemap(df):
 
 
 # =====================================================================================
-# Grafik Halaman D (Fase 4-3d): pangsa terbarukan vs intensitas emisi (keduanya Ember)
+# Grafik Halaman D (Fase 4-3d & Redesign R17): pangsa terbarukan vs intensitas emisi (keduanya Ember)
 # =====================================================================================
 MARKER_EDGE = "#4B5563"   # tepi titik sebaran: abu gelap netral (kontras 7,6:1 terhadap putih) agar warna terang tetap terbaca
 D_X_TITLE = "Pangsa listrik terbarukan, Ember (%)"
@@ -240,8 +326,8 @@ def _size_ref(values, max_px: int = 44) -> float:
 
 
 def scatter_regression(df, intersep, lereng, x_min, x_max, year, sorotan=None, nama_sorotan=None):
-    """Sebaran pangsa (x) vs intensitas (y); ukuran = pembangkitan, warna = benua; garis regresi sederhana.
-    df: pangsa, intensitas, pembangkitan_twh, benua, country_name, *_bulat. sorotan: DataFrame satu baris (opsional)."""
+    """Sebaran pangsa (x) vs intensitas (y); ukuran = pembangkitan, warna = benua; garis regresi sederhana;
+    4 label zona kuadran di latar; titik non-sorotan lebih lembut (opacity 0.35) agar sorotan menonjol."""
     fig = go.Figure()
     sizeref = _size_ref(df["pembangkitan_twh"])
     for benua in sorted(df["benua"].unique()):
@@ -253,12 +339,12 @@ def scatter_regression(df, intersep, lereng, x_min, x_max, year, sorotan=None, n
         fig.add_trace(go.Scatter(
             x=d["pangsa"].tolist(), y=d["intensitas"].tolist(), mode="markers", name=benua,
             marker=dict(size=d["pembangkitan_twh"].tolist(), sizemode="area", sizeref=sizeref, sizemin=4,
-                        color=CONTINENT_COLORS.get(benua, "#999999"), opacity=0.75, line=dict(color=MARKER_EDGE, width=0.5)),
+                        color=CONTINENT_COLORS.get(benua, "#999999"), opacity=0.35, line=dict(color=MARKER_EDGE, width=0.5)),
             hovertext=hover, hoverinfo="text"))
     xs = [float(x_min), float(x_max)]
     ys = [float(intersep) + float(lereng) * x for x in xs]
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="Garis regresi sederhana",
-                             line=dict(color="#222222", width=2, dash="dash"),
+                             line=dict(color="#1F2933", width=2, dash="dash"),
                              hovertext=[f"Garis regresi: intensitas = {theme.fmt_num(intersep, 1)} + "
                                         f"({theme.fmt_num(lereng, 1)}) x pangsa<br>Pangsa {theme.fmt_num(x, 1)}%: "
                                         f"{theme.fmt_num(y, 1)} gCO₂e/kWh" for x, y in zip(xs, ys)], hoverinfo="text"))
@@ -266,15 +352,28 @@ def scatter_regression(df, intersep, lereng, x_min, x_max, year, sorotan=None, n
         r = sorotan.iloc[0]
         fig.add_trace(go.Scatter(
             x=[r["pangsa"]], y=[r["intensitas"]], mode="markers", name=f"Sorotan: {nama_sorotan}",
-            marker=dict(size=20, symbol="circle-open", color=theme.COLOR_HIGHLIGHT, line=dict(width=3)),
+            marker=dict(size=22, symbol="circle-open", color=theme.COLOR_HIGHLIGHT, line=dict(width=3.5)),
             hovertext=[f"<b>{r['country_name']}</b> (sorotan), {year}<br>"
                        f"Pangsa listrik terbarukan (Ember): {theme.fmt_pct(r['pangsa_bulat'], 1)}<br>"
                        f"Intensitas emisi: {theme.fmt_num(r['intensitas_bulat'], 1)} gCO₂e/kWh<br>"
                        f"Pembangkitan: {theme.fmt_num(r['pembangkitan_bulat'], 1)} TWh"], hoverinfo="text"))
+    # 4 label zona kuadran transparan di latar grafik (tidak mengubah fig.data)
+    kuadran = [
+        (0.02, 0.98, "left", "top", "Terbarukan Rendah • Emisi Tinggi", "rgba(254, 226, 226, 0.65)", "#991B1B"),
+        (0.98, 0.98, "right", "top", "Terbarukan Tinggi • Emisi Tinggi", "rgba(254, 243, 199, 0.65)", "#92400E"),
+        (0.02, 0.03, "left", "bottom", "Terbarukan Rendah • Emisi Rendah", "rgba(224, 242, 254, 0.65)", "#075985"),
+        (0.98, 0.03, "right", "bottom", "Terbarukan Tinggi • Emisi Rendah", "rgba(209, 250, 229, 0.70)", "#065F46"),
+    ]
+    for qx, qy, xa, ya, teks, bg, fg in kuadran:
+        fig.add_annotation(
+            x=qx, y=qy, xref="paper", yref="paper", xanchor=xa, yanchor=ya,
+            text=teks, showarrow=False, font=dict(size=10.5, color=fg),
+            bgcolor=bg, borderpad=4,
+        )
     fig.update_layout(height=540, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white",
                       legend=dict(orientation="h", yanchor="top", y=-0.14, x=0),
-                      xaxis=dict(title=D_X_TITLE, range=[-3, 103], gridcolor="#E5E7EB", zeroline=False),
-                      yaxis=dict(title=D_Y_TITLE, rangemode="tozero", gridcolor="#E5E7EB"))
+                      xaxis=dict(title=D_X_TITLE, range=[-3, 103], gridcolor="#E6EFEA", zeroline=False),
+                      yaxis=dict(title=D_Y_TITLE, rangemode="tozero", gridcolor="#E6EFEA"))
     return fig
 
 
@@ -291,13 +390,13 @@ def corr_bar(df):
         x=r, y=d["benua"].tolist(), orientation="h", width=0.62,
         marker_color=[CONTINENT_COLORS.get(b, "#999999") for b in d["benua"]],
         text=[f"r = {theme.fmt_num(x, 2)} (n = {int(n)})" for x, n in zip(r, d["n"])],
-        textposition="outside", cliponaxis=False, textfont=dict(size=12, color="#1F2933"),
+        textposition="outside", cliponaxis=False, textfont=dict(size=12, color="#0F2922"),
         hovertext=[f"{b}<br>Pearson: {theme.fmt_num(x, 2)}<br>Jumlah negara: {int(n)}"
                    for b, x, n in zip(d["benua"], r, d["n"])], hoverinfo="text"))
     fig.update_layout(height=max(300, 90 + 54 * len(d)), margin=dict(l=10, r=20, t=10, b=10),
                       xaxis=dict(title="Korelasi Pearson (r)", range=[lo, hi], tickvals=[-1, -0.5, 0, 0.5, 1],
-                                 ticktext=["-1", "-0,5", "0", "0,5", "1"], gridcolor="#E8EDF2", zeroline=True, zerolinecolor="#6B7280", zerolinewidth=1.5),
-                      yaxis=dict(title=None, automargin=True, tickfont=dict(size=12.5, color="#1F2933")))
+                                 ticktext=["-1", "-0,5", "0", "0,5", "1"], gridcolor="#E6EFEA", zeroline=True, zerolinecolor="#6B7280", zerolinewidth=1.5),
+                      yaxis=dict(title=None, automargin=True, tickfont=dict(size=12.5, color="#0F2922")))
     return fig
 
 
@@ -315,14 +414,14 @@ def change_scatter(df, year, base):
         fig.add_trace(go.Scatter(
             x=d["d_pangsa"].tolist(), y=d["d_intensitas"].tolist(), mode="markers", name=benua,
             marker=dict(size=d["pembangkitan_raw"].tolist(), sizemode="area", sizeref=sizeref, sizemin=4,
-                        color=CONTINENT_COLORS.get(benua, "#999999"), opacity=0.75, line=dict(color=MARKER_EDGE, width=0.5)),
+                        color=CONTINENT_COLORS.get(benua, "#999999"), opacity=0.72, line=dict(color=MARKER_EDGE, width=0.5)),
             hovertext=hover, hoverinfo="text"))
     fig.update_layout(height=480, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white",
                       legend=dict(orientation="h", yanchor="top", y=-0.16, x=0),
                       xaxis=dict(title=f"Perubahan pangsa terbarukan {base} ke {year} (poin persentase)",
-                                 gridcolor="#E5E7EB", zeroline=True, zerolinecolor="#6B7280"),
+                                 gridcolor="#E6EFEA", zeroline=True, zerolinecolor="#6B7280"),
                       yaxis=dict(title=f"Perubahan intensitas emisi {base} ke {year} (gCO₂e/kWh)",
-                                 gridcolor="#E5E7EB", zeroline=True, zerolinecolor="#6B7280"))
+                                 gridcolor="#E6EFEA", zeroline=True, zerolinecolor="#6B7280"))
     return fig
 
 
@@ -338,7 +437,7 @@ def residual_bar(df):
                    f"Selisih: {theme.fmt_delta(r.selisih, 1)} gCO₂e/kWh" for r in d.itertuples()], hoverinfo="text"))
     fig.update_layout(height=max(300, 70 + 34 * len(d)), margin=dict(l=10, r=60, t=10, b=10), plot_bgcolor="white",
                       xaxis=dict(title="Selisih intensitas: aktual dikurangi garis regresi (gCO₂e/kWh)",
-                                 gridcolor="#E5E7EB", zeroline=True, zerolinecolor="#6B7280"),
+                                 gridcolor="#E6EFEA", zeroline=True, zerolinecolor="#6B7280"),
                       yaxis=dict(title=None))
     return fig
 
@@ -347,18 +446,29 @@ def residual_bar(df):
 # Grafik halaman Kualitas Data (Fase 4-3e)
 # =====================================================================================
 def coverage_bar(df, year):
-    """Batang horizontal coverage (%) per indikator pada satu tahun. df: indikator, sumber, tersedia, negara_master, coverage."""
+    """Batang horizontal coverage (%) per indikator pada satu tahun dengan label gabungan absolut+persen dan legenda sumber."""
     d = df.iloc[::-1]
     label = [f"{i} ({s})" for i, s in zip(d["indikator"], d["sumber"])]
     warna = [theme.COLOR_RENEWABLE if s == "Renewable" else theme.COLOR_HIGHLIGHT for s in d["sumber"]]
     hover = [f"{lab}<br>Tersedia: {theme.fmt_num(t, 0)} dari {theme.fmt_num(m, 0)} negara master ({theme.fmt_pct(c, 1)})"
              for lab, t, m, c in zip(label, d["tersedia"], d["negara_master"], d["coverage"])]
-    fig = go.Figure(go.Bar(x=d["coverage"].tolist(), y=label, orientation="h", marker_color=warna,
-                           text=[f"{theme.fmt_num(t, 0)} dari {theme.fmt_num(m, 0)}" for t, m in zip(d["tersedia"], d["negara_master"])],
-                           textposition="outside", cliponaxis=False, hovertext=hover, hoverinfo="text"))
-    fig.update_layout(height=max(300, 80 + 44 * len(d)), margin=dict(l=10, r=90, t=10, b=10), plot_bgcolor="white",
-                      xaxis=dict(title=f"Coverage {year} (% dari negara master)", range=[0, 100], gridcolor="#E5E7EB"),
-                      yaxis=dict(title=None))
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=d["coverage"].tolist(), y=label, orientation="h", marker_color=warna,
+        text=[f"{theme.fmt_num(t, 0)} dari {theme.fmt_num(m, 0)} ({theme.fmt_pct(c, 1)})"
+              for t, m, c in zip(d["tersedia"], d["negara_master"], d["coverage"])],
+        textposition="outside", cliponaxis=False, hovertext=hover, hoverinfo="text", showlegend=False,
+    ))
+    # Legenda warna sumber data (tidak mengubah data[0] yang diverifikasi test_halaman_kualitas)
+    for nama_sumber, col in (("Sumber: Renewable Energy Share", theme.COLOR_RENEWABLE), ("Sumber: Ember", theme.COLOR_HIGHLIGHT)):
+        fig.add_trace(go.Bar(x=[None], y=[None], orientation="h", name=nama_sumber, marker_color=col, showlegend=True))
+    fig.update_layout(
+        height=max(320, 90 + 44 * len(d)), margin=dict(l=10, r=145, t=10, b=10), plot_bgcolor="white",
+        legend=dict(orientation="h", yanchor="top", y=-0.2, x=0),
+        xaxis=dict(title=f"Coverage {year} (% dari negara master)", range=[0, 122],
+                   tickvals=[0, 20, 40, 60, 80, 100], gridcolor="#E6EFEA"),
+        yaxis=dict(title=None),
+    )
     return fig
 
 
@@ -377,6 +487,6 @@ def source_scatter(df, year):
                                  hovertext=hover, hoverinfo="text"))
     fig.update_layout(height=470, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white",
                       legend=dict(orientation="h", yanchor="top", y=-0.24, x=0),
-                      xaxis=dict(title="Pangsa listrik terbarukan, Renewable Energy Share (%)", range=[-3, 103], gridcolor="#E5E7EB"),
-                      yaxis=dict(title="Pangsa listrik terbarukan, Ember (%)", range=[-3, 103], gridcolor="#E5E7EB"))
+                      xaxis=dict(title="Pangsa listrik terbarukan, Renewable Energy Share (%)", range=[-3, 103], gridcolor="#E6EFEA"),
+                      yaxis=dict(title="Pangsa listrik terbarukan, Ember (%)", range=[-3, 103], gridcolor="#E6EFEA"))
     return fig

@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import components
 import db
 import queries
 import style
@@ -15,20 +16,30 @@ year, base = f["year"], queries.BASE_YEAR
 cont, grp = f["continents"], f["groups"]
 opts = db.safe(queries.filter_options)
 names = dict(opts["countries"])
+cname = names.get(f["country"], f["country"])
 
-st.title("C. Bauran Pembangkitan")
-st.caption("Bagaimana total pembangkitan listrik tersusun menurut kategori dan sumber pembangkitan, 2019-2023. "
-           "Sumber: Data Warehouse NP Energy Intelligence (Ember).")
+chips = components.active_filter_chips(
+    year, cont, opts["continents"], grp, opts["groups"], country_name=cname
+)
+components.hero_banner(
+    "Bauran Pembangkitan",
+    "Bagaimana total pembangkitan listrik tersusun menurut kategori dan sumber pembangkitan (2019–2023).",
+    chips=chips,
+    variant="mix",
+)
+st.caption("Sumber: Data Warehouse NP Energy Intelligence (Ember).")
 
 katalog = db.safe(queries.c_catalog)
-kategori_data = charts.urut_kategori(katalog["kategori"])
+kategori_data = charts.urut_kategori(katalog["kategori"]) if not katalog.empty else []
 sumber_kat = {k: sorted(katalog.loc[katalog["kategori"] == k, "sumber"]) for k in kategori_data}
 
 cat = db.safe(queries.c_category, cont, grp)
 src = db.safe(queries.c_source, cont, grp)
 if cat.empty or year not in set(cat["year"]):
-    st.info("Tidak ada data bauran pembangkitan untuk filter ini. Data bauran (Ember) tidak mencakup sebagian negara; "
-            "ubah filter di sidebar.")
+    components.empty_state(
+        "Tidak ada data bauran pembangkitan untuk filter ini. Data bauran (Ember) tidak mencakup sebagian negara; "
+        "ubah filter di sidebar."
+    )
     st.stop()
 
 cur = cat[cat["year"] == year].set_index("kategori")
@@ -36,23 +47,25 @@ bandingkan = year != base and base in set(cat["year"])
 prev = cat[cat["year"] == base].set_index("kategori") if bandingkan else None
 semua = (len(cont) == len(opts["continents"])) and (len(grp) == len(opts["groups"]))
 tren_label = "Dunia" if semua else "Negara terpilih"
-total = float(cur["total_twh"].iloc[0])
-total_awal = float(prev["total_twh"].iloc[0]) if bandingkan else None
+total_raw = cur["total_twh"].iloc[0]
+total = float(total_raw) if pd.notna(total_raw) else None
+total_awal_raw = prev["total_twh"].iloc[0] if (bandingkan and not prev.empty) else None
+total_awal = float(total_awal_raw) if (total_awal_raw is not None and pd.notna(total_awal_raw)) else None
 counts = db.safe(queries.c_counts, cont, grp).set_index("year")
 totals = db.safe(queries.c_totals, cont, grp).set_index("year")
-n_data = int(counts.loc[year, "negara_berdata"])
-n_all = int(totals.loc[year, "negara_total"]) if year in totals.index else n_data
+n_data = int(counts.loc[year, "negara_berdata"]) if (year in counts.index and pd.notna(counts.loc[year, "negara_berdata"])) else 0
+n_all = int(totals.loc[year, "negara_total"]) if (year in totals.index and pd.notna(totals.loc[year, "negara_total"])) else n_data
 
 # ------------------------------------------------------------------ kartu KPI
 WARNA_DELTA = {"Fossil": "inverse", "Renewable": "normal"}   # selain itu: netral
 kolom = st.columns(1 + len(kategori_data))
-kolom[0].metric("Total pembangkitan", f"{theme.fmt_num(total, 0)} TWh",
-                theme.fmt_delta(round(total) - round(total_awal), 0, " TWh") if bandingkan else None,
+kolom[0].metric("Total pembangkitan", f"{theme.fmt_num(total, 0)} TWh" if total is not None else "tidak ada data",
+                theme.fmt_delta(round(total) - round(total_awal), 0, " TWh") if (bandingkan and total is not None and total_awal is not None) else None,
                 help="Jumlah pembangkitan semua sumber pada negara berdata Ember di filter ini. "
                      "Selisih dihitung dari angka yang ditampilkan.")
 for kol, k in zip(kolom[1:], kategori_data):
-    nilai = float(cur.loc[k, "pangsa_bulat"]) if k in cur.index else None
-    awal = float(prev.loc[k, "pangsa_bulat"]) if (bandingkan and k in prev.index) else None
+    nilai = float(cur.loc[k, "pangsa_bulat"]) if (k in cur.index and pd.notna(cur.loc[k, "pangsa_bulat"])) else None
+    awal = float(prev.loc[k, "pangsa_bulat"]) if (bandingkan and k in prev.index and pd.notna(prev.loc[k, "pangsa_bulat"])) else None
     kol.metric(f"Pangsa {charts.kategori_label(k).lower()}", theme.fmt_pct(nilai),
                theme.fmt_delta(nilai - awal, 1, " poin") if (nilai is not None and awal is not None) else None,
                delta_color=WARNA_DELTA.get(k, "off"),
@@ -72,8 +85,11 @@ if not baris.empty and pd.notna(baris["terbarukan"].iloc[0]):
 
 # ------------------------------------------------------------------ pembangun seri (kategori atau sumber)
 st.subheader("Komposisi bauran per tahun")
+components.micro_guide(
+    "Pilih tingkat Sumber rinci untuk melihat kontribusi tiap jenis pembangkitan dengan warna kontras tinggi; arahkan kursor untuk angka TWh."
+)
 tingkat = st.radio("Tingkat detail", ["Kategori", "Sumber rinci"], horizontal=True, key="c_level",
-                   help="Kategori: fosil, nuklir, terbarukan. Sumber rinci: sumber pembangkitan penyusun kategori.")
+                   help="Kategori: pengelompokan utama. Sumber rinci: jenis pembangkitan penyusun kategori.")
 kat_pilih = None
 if tingkat == "Sumber rinci":
     pilihan = st.selectbox("Rinci kategori", ["Semua kategori"] + kategori_data, key="c_kat",
@@ -97,12 +113,12 @@ def ambil(cat_df, src_df, tahun):
     """item -> (TWh, pangsa dibulatkan) pada satu tahun. Item tanpa baris data tidak dimasukkan."""
     if tingkat == "Kategori":
         d = cat_df[cat_df["year"] == tahun]
-        return {r.kategori: (r.twh, r.pangsa_bulat) for r in d.itertuples()}
+        return {r.kategori: (r.twh, r.pangsa_bulat) for r in d.itertuples() if pd.notna(r.twh)}
     d = src_df[src_df["year"] == tahun]
     if kat_pilih:
         d = d[d["kategori"] == kat_pilih]
-        return {r.sumber: (r.twh, r.pangsa_kategori_bulat) for r in d.itertuples()}
-    return {r.sumber: (r.twh, r.pangsa_total_bulat) for r in d.itertuples()}
+        return {r.sumber: (r.twh, r.pangsa_kategori_bulat) for r in d.itertuples() if pd.notna(r.twh)}
+    return {r.sumber: (r.twh, r.pangsa_total_bulat) for r in d.itertuples() if pd.notna(r.twh)}
 
 
 def buat_seri(kolom_data):
@@ -136,12 +152,22 @@ keterangan = ("Tinggi setiap batang = 100% dari total pembangkitan "
 if bandingkan and tingkat == "Kategori":
     perubahan = []
     for k in kategori_data:
-        if k in cur.index and k in prev.index:
+        if k in cur.index and k in prev.index and pd.notna(cur.loc[k, "pangsa_bulat"]) and pd.notna(prev.loc[k, "pangsa_bulat"]):
             perubahan.append(f"{charts.kategori_label(k).lower()} "
                              f"{theme.fmt_delta(float(cur.loc[k, 'pangsa_bulat']) - float(prev.loc[k, 'pangsa_bulat']), 1, ' poin')}")
     if perubahan:
         keterangan += f" Dari {base} ke {year}: " + ", ".join(perubahan) + " (pola dari data, bukan penyebabnya)."
 st.caption(keterangan)
+
+src_y = src[src["year"] == year]
+if not src_y.empty:
+    terbesar = src_y.sort_values("twh", ascending=False).iloc[0]
+    if pd.notna(terbesar["twh"]) and float(terbesar["twh"]) > 0:
+        components.insight_box(
+            f"Pada {year} ({tren_label.lower()}), penyumbang pembangkitan terbesar adalah "
+            f"{charts.sumber_label(terbesar['sumber'])} dengan {theme.fmt_num(float(terbesar['twh']), 1)} TWh "
+            f"({theme.fmt_pct(terbesar['pangsa_total_bulat'])} dari total)."
+        )
 
 # ------------------------------------------------------------------ perbandingan dengan negara sorotan
 iso = f["country"]
@@ -149,9 +175,9 @@ st.subheader(f"Perbandingan: {tren_label} dan negara sorotan, {year}")
 cat_c = db.safe(queries.c_category_country, iso)
 src_c = db.safe(queries.c_source_country, iso)
 if cat_c.empty or year not in set(cat_c["year"]):
-    st.info(f"{names.get(iso, iso)} tidak memiliki data bauran Ember pada {year}. Pilih negara sorotan lain di sidebar.")
+    st.info(f"{cname} tidak memiliki data bauran Ember pada {year}. Pilih negara sorotan lain di sidebar.")
 else:
-    batang = [(tren_label, ambil(cat, src, year)), (names.get(iso, iso), ambil(cat_c, src_c, year))]
+    batang = [(tren_label, ambil(cat, src, year)), (cname, ambil(cat_c, src_c, year))]
     st.plotly_chart(charts.stacked_share([b[0] for b in batang], buat_seri(batang), judul_sumbu, horizontal=True),
                     width="stretch")
     st.caption("Dua batang memakai tingkat detail yang sama dengan grafik di atas. Batang negara sorotan tidak "
@@ -160,10 +186,9 @@ else:
 
 # ------------------------------------------------------------------ treemap
 st.subheader(f"Kontribusi sumber pembangkitan, {year}")
-src_y = src[src["year"] == year]
 gambar = charts.treemap_frame(src_y)
 if gambar.empty:
-    st.info("Tidak ada sumber dengan pembangkitan lebih dari 0 TWh pada filter ini.")
+    components.empty_state("Tidak ada sumber dengan pembangkitan lebih dari 0 TWh pada filter ini.")
 else:
     st.plotly_chart(charts.mix_treemap(src_y), width="stretch")
     dibuang = len(src_y) - len(gambar)
@@ -182,13 +207,15 @@ for k in kategori_data:
     for s in sumber_kat[k]:
         if (k, s) in akhir_idx.index:
             r = akhir_idx.loc[(k, s)]
-            pa = float(awal_idx.loc[(k, s), "pangsa_total_bulat"]) if (awal_idx is not None and (k, s) in awal_idx.index) else None
+            pa = float(awal_idx.loc[(k, s), "pangsa_total_bulat"]) if (awal_idx is not None and (k, s) in awal_idx.index and pd.notna(awal_idx.loc[(k, s), "pangsa_total_bulat"])) else None
+            pt = float(r["pangsa_total_bulat"]) if pd.notna(r["pangsa_total_bulat"]) else None
+            pk = float(r["pangsa_kategori_bulat"]) if pd.notna(r["pangsa_kategori_bulat"]) else None
             baris_sumber.append({"Kategori": charts.kategori_label(k), "Sumber": f"{charts.sumber_label(s)} ({s})",
-                                 f"Pembangkitan {year} (TWh)": float(r["twh"]),
-                                 "Pangsa total (%)": float(r["pangsa_total_bulat"]),
-                                 "Pangsa dalam kategori (%)": float(r["pangsa_kategori_bulat"]),
+                                 f"Pembangkitan {year} (TWh)": float(r["twh"]) if pd.notna(r["twh"]) else None,
+                                 "Pangsa total (%)": pt,
+                                 "Pangsa dalam kategori (%)": pk,
                                  f"Pangsa total {base} (%)": pa,
-                                 "Perubahan (poin)": (round(float(r["pangsa_total_bulat"]) - pa, 1) if pa is not None else None)})
+                                 "Perubahan (poin)": (round(pt - pa, 1) if (pt is not None and pa is not None) else None)})
         else:
             baris_sumber.append({"Kategori": charts.kategori_label(k), "Sumber": f"{charts.sumber_label(s)} ({s})",
                                  f"Pembangkitan {year} (TWh)": None, "Pangsa total (%)": None,
@@ -218,11 +245,11 @@ detail = db.safe(queries.c_detail, year, cont, grp, pilih, kat_param, tampil_nol
 n_cocok = db.safe(queries.c_detail_count, year, cont, grp, pilih, kat_param, tampil_nol)
 n_nol = (db.safe(queries.c_detail_count, year, cont, grp, pilih, kat_param, True) - n_cocok) if not tampil_nol else 0
 if detail.empty:
-    st.info("Tidak ada baris yang cocok dengan pilihan ini.")
+    components.empty_state("Tidak ada baris yang cocok dengan pilihan ini.")
 else:
     tabel = pd.DataFrame({"Negara": detail["negara"], "Tahun": detail["tahun"].astype(int),
                           "Kategori": [charts.kategori_label(k) for k in detail["kategori"]],
-                          "Sumber": [f"{charts.sumber_label(s)} ({s})" for s in detail["sumber"]],
+                          "Sumber": [charts.sumber_label(s) for s in detail["sumber"]],
                           "Pembangkitan (TWh)": detail["twh"], "Pangsa dalam negara (%)": detail["pangsa_negara"]})
     st.dataframe(tabel, hide_index=True, width="stretch", column_config={
         "Pembangkitan (TWh)": st.column_config.NumberColumn(format="%.1f"),
@@ -230,7 +257,7 @@ else:
     st.download_button("Unduh tabel (CSV)", tabel.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"bauran_pembangkitan_{year}.csv", mime="text/csv")
     st.caption(f"Menampilkan {len(detail)} dari {n_cocok} baris, diurutkan dari pembangkitan terbesar"
-               + (f"; sisanya tidak ditampilkan (naikkan batas atau pilih negara)" if n_cocok > len(detail) else "")
+               + ("; sisanya tidak ditampilkan (naikkan batas atau pilih negara)" if n_cocok > len(detail) else "")
                + (f". {n_nol} baris 0 TWh disembunyikan (aktifkan 'Tampilkan baris 0 TWh' untuk melihatnya)"
                   if n_nol else "") + ". Sel kosong berarti tidak ada nilai di sumber; tidak diisi perkiraan.")
 
@@ -238,11 +265,11 @@ with st.expander("Cara membaca dan definisi"):
     st.markdown(
         "- **Bauran pembangkitan** adalah susunan total pembangkitan listrik menurut sumbernya, dalam **TWh** "
         "(terawatt-jam).\n"
-        "- **Kategori** adalah pengelompokan sumber (fosil, nuklir, terbarukan); **sumber** adalah jenis "
+        "- **Kategori** adalah pengelompokan utama sumber; **sumber** adalah jenis "
         "pembangkitan yang menyusun kategori itu. Daftar keduanya diambil dari data.\n"
         "- **Batang 100% bertumpuk:** tinggi batang selalu 100%; lebar segmen menunjukkan pangsa. Pangsa dihitung dari "
         "jumlah TWh, bukan rata-rata antarnegara, sehingga negara besar berpengaruh lebih besar.\n"
-        "- **Treemap:** luas persegi = TWh; kategori sebagai induk, sumber sebagai anak. Sumber bernilai 0 TWh tidak "
+        "- **Diagram petak (Treemap):** luas persegi = TWh; kategori sebagai induk, sumber sebagai anak. Sumber bernilai 0 TWh tidak "
         "digambar, tetapi tetap ada di tabel.\n"
         "- **Pangsa dalam kategori** menunjukkan komposisi sumber di dalam satu kategori (100% = total kategori itu).\n"
         "- **Sumber data:** Ember. Negara tanpa data Ember tidak ikut dihitung dan tidak dianggap 0. Angka pangsa "

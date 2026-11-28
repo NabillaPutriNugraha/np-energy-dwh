@@ -1,13 +1,14 @@
 """Palet warna, label berbahasa Indonesia, dan format angka (koma desimal, titik ribuan)."""
 import math
 
-# Warna data utama berasal dari palet Okabe-Ito (Okabe & Ito 2008; Wong 2011) yang dirancang agar dapat dibedakan pada buta warna merah-hijau.
-# Pemetaan warna ke makna (terbarukan, fosil, intensitas, sorotan, nuklir) adalah KEPUTUSAN DESAIN proyek, dipakai konsisten di semua halaman.
-COLOR_RENEWABLE = "#009E73"   # terbarukan
-COLOR_FOSSIL = "#4D4D4D"      # fosil
-COLOR_INTENSITY = "#D55E00"   # intensitas emisi
-COLOR_HIGHLIGHT = "#0072B2"   # negara sorotan
-COLOR_NUCLEAR = "#CC79A7"     # nuklir (halaman C)
+# Warna data utama diselaraskan dengan Luminous Eco-Intelligence dan tetap memperhatikan keterbedaan pada buta warna.
+# Pemetaan warna ke makna (terbarukan, fosil, intensitas, sorotan, nuklir, coral) adalah KEPUTUSAN DESAIN proyek.
+COLOR_RENEWABLE = "#059669"   # terbarukan (Emerald, kontras 3,77:1 dg putih)
+COLOR_FOSSIL = "#475569"      # fosil (Slate, kontras 7,58:1 dg putih)
+COLOR_INTENSITY = "#D55E00"   # intensitas emisi (Okabe-Ito Vermilion, kontras 3,84:1 dg putih)
+COLOR_HIGHLIGHT = "#0072B2"   # negara sorotan (Okabe-Ito Blue, kontras 5,19:1 dg putih)
+COLOR_NUCLEAR = "#CC79A7"     # nuklir (Okabe-Ito Reddish Purple, kontras 3,06:1 dg putih)
+COLOR_CORAL = "#DC2626"       # aksen semantik negatif / peringkat terendah (kontras 4,83:1 dg putih)
 
 LABEL = {
     "terbarukan": "Pangsa listrik terbarukan (%)",

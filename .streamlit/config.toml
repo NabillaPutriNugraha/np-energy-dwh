@@ -1,4 +1,4 @@
-# Konfigurasi Streamlit untuk dashboard NP Energy Intelligence.
+# Konfigurasi Streamlit untuk dashboard NP Energy Intelligence ("Luminous Eco-Intelligence").
 # Dibaca dari folder tempat perintah "streamlit run" dijalankan (folder utama proyek).
 
 [server]
@@ -14,11 +14,11 @@ gatherUsageStats = false
 toolbarMode = "minimal"
 
 [theme]
-primaryColor = "#0072B2"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F7FA"
-textColor = "#1F2933"
+primaryColor = "#047857"
+backgroundColor = "#F4F7F6"
+secondaryBackgroundColor = "#EAF0EE"
+textColor = "#0F2922"
 font = "sans-serif"
-borderColor = "#D9E2EC"
-baseRadius = "0.5rem"
-dataframeHeaderBackgroundColor = "#EAF0F6"
+borderColor = "#DCE5E2"
+baseRadius = "0.75rem"
+dataframeHeaderBackgroundColor = "#E6EFEA"

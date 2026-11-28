@@ -514,3 +514,32 @@ Tseng, C., Quadri, G. J., Wang, Z., & Szafir, D. A. (2023). *Proc. ACM CHI*. htt
 W3C. (2023). *Web Content Accessibility Guidelines (WCAG) 2.2.* https://www.w3.org/TR/WCAG22/ (halaman 1.4.11 terverifikasi) | Wagemans, J., et al. (2012). *Psychol Bull, 138*(6), 1172-1217. https://doi.org/10.1037/a0029333 |
 Wong, B. (2011). *Nat Methods, 8*, 441. https://doi.org/10.1038/nmeth.1618 | Yi, J. S., Kang, Y. a., Stasko, J. T., & Jacko, J. A. (2007). *IEEE Trans. Vis. Comput. Graph., 13*(6), 1224-1231. https://doi.org/10.1109/TVCG.2007.70515 |
 Zhang, N., Zhang, J., Jiang, S., & Ge, W. (2024). *Sensors, 24*(18), 5966. https://doi.org/10.3390/s24185966 | |
+
+
+---
+
+# Tahap 2 Redesign Visual: "Luminous Eco-Intelligence" Design System (Evaluasi SUS & Nielsen Heuristics)
+
+Pembaruan ini **hanya menyentuh lapisan visual/UI** (`.streamlit/config.toml`, `dashboard/style.py`, `dashboard/components.py`, `dashboard/theme.py`, `dashboard/charts.py`, `dashboard/app.py`, dan tata letak `dashboard/halaman/*.py`). Seluruh logika ETL (`src/`), skema & view database (`sql/`), koneksi baca-saja (`dashboard/db.py`, `dashboard/settings.py`), serta query SQL dan rumus KPI (`dashboard/queries.py`) **tidak diubah**.
+
+## Ringkasan Sistem Visual ("Luminous Eco-Intelligence")
+- **Kanvas & Permukaan:** latar utama Soft Mint-Mist (`#F4F7F6`), sidebar Cool Sage (`#EAF0EE`), kartu permukaan putih (`#FFFFFF`, radius `14px`, border `#DCE5E2`, bayangan halus) untuk separasi *figure-ground* yang tegas.
+- **Warna Primer & Kontras:** warna kontrol utama Emerald Deep (`#047857`, kontras teks putih `5,48:1` — lolos WCAG AA), teks utama Deep Forest Ink (`#0F2922`, kontras `14,32:1` pada kanvas dan `13,37:1` pada sidebar — lolos WCAG AAA). Seluruh CSS berjalan **100% offline** (tanpa `@import` atau CDN eksternal).
+- **Komponen Reusable (`dashboard/components.py`):**
+  - `hero_banner()` & `active_filter_chips()`: banner kompak bergradien domain (Eco, Slate-Bronze, Navy-Cyan, Teal-Amber, Slate-Emerald) dengan ilustrasi SVG inline dan chip status filter aktif.
+  - `micro_guide()` (`💡`), `insight_box()` (`📌` dinamis dari data, tanpa klaim kausal), `empty_state()` ramah pengguna, `status_cards()`, `glossary_box()`, `etl_sidebar_card()`, dan `correlation_card_accent()`.
+
+## Pemetaan Perbaikan terhadap Temuan Evaluasi SUS & Nielsen Heuristics
+| Kode Temuan | Fokus Usability / Heuristik | Implementasi Redesign |
+|---|---|---|
+| **H1, M08** | *Visibility of System Status* | Chip filter aktif permanen di Hero Banner setiap halaman + kartu status sinkronisasi ETL di sidebar. |
+| **M01 (Severity 3.5)** | *Error Prevention & NULL-Safety* | Pengamanan `pd.isna()`/fallback pada seluruh perhitungan delta tampilan & render halaman (teruji pada kombinasi `"Tidak diketahui"` + tahun 2020 di 6 halaman) + `components.empty_state()`. |
+| **R05, M01, M02, M03** | *Help, Feedback, & Error Recovery* | Indikator loading pembaruan (`st.spinner` + styling `stStatusWidget`), mikro-panduan (`💡`), kotak insight dinamis (`📌`), serta empty state kontekstual (`filter_empty_message()`) yang membedakan filter kosong vs kombinasi tak beririsan. |
+| **M04, M05, M06** | *Consistency & Semantic Coding* | Judul kartu KPI dan judul bagian visualisasi (`h2`/`h3`) seragam **ALL CAPS**, angka *tabular numerals*, tinggi 4 kartu KPI sejajar, pil delta hijau/coral, serta aksen warna korelasi negatif/positif pada Halaman D. |
+| **M07** | *Visual Distinction* | Peringkat Halaman A membedakan tab **Tertinggi** (hijau emerald `#059669`) dan **Terendah** (merah coral `#DC2626`), plus badge visual status kelengkapan di tabel detail. |
+| **R10** | *Aesthetic & Minimalist Sidebar* | Sidebar Cool Sage dengan pil multiselect lembut (`#D1FAE5` / `#065F46`, kontras `6,78:1`) dan kontainer gulir (`max-height: 96px`). |
+| **R12** | *Match Between System & Real World* | Halaman B menyediakan tampilan default **Grouped Bar Chart** berdampingan (2019 vs tahun terpilih) di samping opsi **Garis rentang (Dumbbell)**. |
+| **M09, M10 (T10)** | *Contrast & Language Consistency* | Palet cerah & kontras tinggi untuk 9 sumber pembangkitan di `SUMBER_COLOR` (`charts.py`) dengan label Bahasa Indonesia yang konsisten pada grafik, tabel detail, dan padanan *"Diagram petak (Treemap)"*. |
+| **M11 (T11, E3)** | *Error Prevention — Peta Ringkasan* | `share_map()` diubah dari gradasi hijau kontinu menjadi **5 kelas warna diskrit per 20%** ramah buta warna, warna abu-abu netral `#E2E8F0` + legenda *"Abu-abu = Tidak ada data"*, garis batas negara tegas, dan tooltip detail. |
+| **M12 (T12, E3)** | *Recognition Rather Than Recall — Kualitas Data* | `coverage_bar()` menampilkan label gabungan absolut + persen (mis. `210 dari 221 (95,0%)`) serta legenda warna sumber (`Renewable` vs `Ember`), dilengkapi 3 kartu ringkasan status agregat baru di atasnya. |
+| **R04, R09, R11, R20** | *Progressive Disclosure & Plain-Language Glossary* | Kamus Istilah & Satuan global di sidebar (*Pangsa*, *Bauran*, *TWh*, *gCO₂e/kWh*, *Poin persentase*), Panduan Istilah Statistik di Halaman D, serta 3 kartu status + Kamus Istilah di Halaman Kualitas Data (seluruh **M01–M12** & **R01–R20** teratasi tuntas). |
